@@ -49,7 +49,11 @@ _DECLARATION_AT_RULES = frozenset({"page", "counter-style", "property"})
 _NO_CONTENT = object()
 
 
-class CssTooLargeError(ValueError):
+class CssError(ValueError):
+    """A stylesheet could not be processed. Callers drop the stylesheet."""
+
+
+class CssTooLargeError(CssError):
     """The stylesheet is bigger than the configured limit."""
 
 
@@ -73,6 +77,20 @@ def _escape_markup(text: str) -> str:
 
 def _is_blank(token: Any) -> bool:
     return isinstance(token, ast.WhitespaceToken | ast.Comment)
+
+
+def _has_variable(tokens: list[Any]) -> bool:
+    return any(isinstance(t, ast.FunctionBlock) and t.lower_name == "var" for t in tokens)
+
+
+def _attr_may_build_a_url(token: ast.FunctionBlock) -> bool:
+    """``attr(x url)`` and ``attr(x type(<url>))`` turn an attribute's text into an address."""
+    for argument in token.arguments:
+        if isinstance(argument, ast.IdentToken) and argument.lower_value in ("url", "src"):
+            return True
+        if isinstance(argument, ast.FunctionBlock) and argument.lower_name == "type":
+            return True
+    return False
 
 
 class _Sanitizer:
@@ -99,13 +117,30 @@ class _Sanitizer:
         string = ast.StringToken(line, column, value, css_string(value))
         return ast.FunctionBlock(line, column, "url", [string])
 
-    def _walk(self, tokens: list[Any], *, fonts: bool, depth: int = 0) -> list[Any] | None:
-        """Rebuild a token list. Returns None when the whole declaration has to be dropped."""
+    def _walk(
+        self,
+        tokens: list[Any],
+        *,
+        fonts: bool,
+        depth: int = 0,
+        strings_are_urls: bool = False,
+    ) -> list[Any] | None:
+        """Rebuild a token list. Returns None when the whole declaration has to be dropped.
+
+        Every token that can name a resource is either rewritten to the gateway or causes the
+        declaration to be dropped. ``strings_are_urls`` is set for the arguments of
+        ``image-set()``, where a bare string is an image address.
+        """
         if depth > MAX_DEPTH:
             return None
         result: list[Any] = []
         for token in tokens:
-            if isinstance(token, ast.URLToken):
+            if isinstance(token, ast.StringToken) and strings_are_urls:
+                mapped = self._map_url(token.value, fonts=False)
+                if mapped is None:
+                    return None
+                result.append(self._url_block(mapped, token.source_line, token.source_column))
+            elif isinstance(token, ast.URLToken):
                 mapped = self._map_url(token.value, fonts=fonts)
                 if mapped is None:
                     return None
@@ -140,24 +175,15 @@ class _Sanitizer:
                 return None
             return self._url_block(mapped, token.source_line, token.source_column)
         if name in _IMAGE_SET_FUNCTIONS:
-            rebuilt: list[Any] = []
-            for argument in token.arguments:
-                if isinstance(argument, ast.StringToken):
-                    mapped = self._map_url(argument.value, fonts=False)
-                    if mapped is None:
-                        return None
-                    rebuilt.append(
-                        self._url_block(mapped, argument.source_line, argument.source_column)
-                    )
-                elif isinstance(argument, ast.FunctionBlock):
-                    inner = self._function(argument, fonts=False, depth=depth + 1)
-                    if inner is None:
-                        return None
-                    rebuilt.append(inner)
-                else:
-                    rebuilt.append(argument)
+            rebuilt = self._walk(
+                token.arguments, fonts=False, depth=depth + 1, strings_are_urls=True
+            )
+            if rebuilt is None or _has_variable(rebuilt):
+                return None  # a variable could stand for an address we never saw
             token.arguments = rebuilt
             return token
+        if name == "attr" and _attr_may_build_a_url(token):
+            return None
         inner_tokens = self._walk(token.arguments, fonts=fonts, depth=depth + 1)
         if inner_tokens is None:
             return None
@@ -197,7 +223,10 @@ class _Sanitizer:
     def _qualified(self, rule: ast.QualifiedRule, depth: int) -> str:
         if depth > MAX_DEPTH:
             return ""
-        prelude = tinycss2.serialize(rule.prelude).strip()
+        prelude_tokens = self._walk(rule.prelude, fonts=False)
+        if prelude_tokens is None:
+            return ""
+        prelude = tinycss2.serialize(prelude_tokens).strip()
         if not prelude:
             return ""
         return f"{prelude}{{{self._block(rule.content, depth, font_face=False)}}}"
@@ -215,7 +244,10 @@ class _Sanitizer:
         if keyword in _DECLARATION_AT_RULES:
             if rule.content is None:
                 return ""
-            prelude = tinycss2.serialize(rule.prelude).strip()
+            declaration_prelude = self._walk(rule.prelude, fonts=False)
+            if declaration_prelude is None:
+                return ""
+            prelude = tinycss2.serialize(declaration_prelude).strip()
             return f"@{keyword} {prelude}{{{self._block(rule.content, depth, font_face=False)}}}"
         if keyword in _NESTING_AT_RULES or keyword in _KEYFRAME_AT_RULES:
             prelude_tokens = self._walk(rule.prelude, fonts=False)
@@ -276,8 +308,13 @@ def sanitize_stylesheet(
     options = options or CssOptions()
     if len(css.encode("utf-8", errors="ignore")) > options.max_bytes:
         raise CssTooLargeError("stylesheet is too large")
-    parsed = tinycss2.parse_stylesheet(css, skip_comments=True, skip_whitespace=True)
-    return _escape_markup(_Sanitizer(base, mapper, options).rules(parsed))
+    try:
+        parsed = tinycss2.parse_stylesheet(css, skip_comments=True, skip_whitespace=True)
+        return _escape_markup(_Sanitizer(base, mapper, options).rules(parsed))
+    except CssError:
+        raise
+    except Exception as exc:  # unexpected input must end in a refusal, never a crash
+        raise CssError("stylesheet could not be processed") from exc
 
 
 def sanitize_declarations(
@@ -289,9 +326,151 @@ def sanitize_declarations(
         return ""
     sanitizer = _Sanitizer(base, mapper, options)
     parts: list[str] = []
-    for item in tinycss2.parse_declaration_list(css, skip_comments=True, skip_whitespace=True):
-        if isinstance(item, ast.Declaration):
-            piece = sanitizer.declaration(item, font_face=False)
-            if piece:
-                parts.append(piece)
+    try:
+        for item in tinycss2.parse_declaration_list(css, skip_comments=True, skip_whitespace=True):
+            if isinstance(item, ast.Declaration):
+                piece = sanitizer.declaration(item, font_face=False)
+                if piece:
+                    parts.append(piece)
+    except Exception:  # a style attribute that cannot be processed is dropped
+        return ""
     return _escape_markup(";".join(parts))
+
+
+# --- verification --------------------------------------------------------------------------------
+#
+# Rewriting says what the output should be. Verification looks at finished CSS and answers one
+# question: could it make a browser contact anything that is not the gateway? It does not trust the
+# rewriter, and it never rewrites, so running it after the rewriter cannot change what is correct.
+
+
+def _owned(value: str, mapper: UrlMapper) -> bool:
+    return value.startswith("#") or mapper.owns(value)
+
+
+def _verify_tokens(
+    tokens: list[Any], mapper: UrlMapper, *, strings_are_urls: bool = False, depth: int = 0
+) -> bool:
+    if depth > MAX_DEPTH:
+        return False
+    for token in tokens:
+        if isinstance(token, ast.URLToken):
+            if not _owned(token.value, mapper):
+                return False
+        elif isinstance(token, ast.StringToken):
+            if strings_are_urls and not _owned(token.value, mapper):
+                return False
+        elif isinstance(token, ast.FunctionBlock):
+            if not _verify_function(token, mapper, depth):
+                return False
+        elif isinstance(
+            token, ast.ParenthesesBlock | ast.SquareBracketsBlock | ast.CurlyBracketsBlock
+        ) and not _verify_tokens(token.content, mapper, depth=depth + 1):
+            return False
+    return True
+
+
+def _verify_function(token: ast.FunctionBlock, mapper: UrlMapper, depth: int) -> bool:
+    name = token.lower_name
+    if name in _BLOCKED_FUNCTIONS:
+        return False
+    if name in _URL_FUNCTIONS:
+        arguments = [a for a in token.arguments if not _is_blank(a)]
+        return (
+            len(arguments) == 1
+            and isinstance(arguments[0], ast.StringToken)
+            and _owned(arguments[0].value, mapper)
+        )
+    if name in _IMAGE_SET_FUNCTIONS:
+        return not _has_variable(token.arguments) and _verify_tokens(
+            token.arguments, mapper, strings_are_urls=True, depth=depth + 1
+        )
+    if name == "attr" and _attr_may_build_a_url(token):
+        return False
+    return _verify_tokens(token.arguments, mapper, depth=depth + 1)
+
+
+def _verify_items(content: list[Any], mapper: UrlMapper, depth: int) -> bool:
+    if depth > MAX_DEPTH:
+        return False
+    for item in tinycss2.parse_blocks_contents(content, skip_comments=True, skip_whitespace=True):
+        if isinstance(item, ast.Declaration):
+            if item.lower_name in _BLOCKED_PROPERTIES:
+                return False
+            if not _verify_tokens(item.value, mapper):
+                return False
+        elif isinstance(item, ast.QualifiedRule):
+            if not _verify_rule(item, mapper, depth + 1):
+                return False
+        elif isinstance(item, ast.AtRule) and not _verify_at_rule(item, mapper, depth + 1):
+            return False
+    return True
+
+
+def _verify_rule(rule: ast.QualifiedRule, mapper: UrlMapper, depth: int) -> bool:
+    return _verify_tokens(rule.prelude, mapper) and _verify_items(rule.content, mapper, depth)
+
+
+def _verify_at_rule(rule: ast.AtRule, mapper: UrlMapper, depth: int) -> bool:
+    if depth > MAX_DEPTH:
+        return False
+    keyword = rule.lower_at_keyword
+    if keyword == "import":
+        tokens = [t for t in rule.prelude if not _is_blank(t)]
+        first_ok = bool(tokens) and isinstance(
+            tokens[0], ast.FunctionBlock | ast.StringToken | ast.URLToken
+        )
+        if not first_ok:
+            return False
+        if isinstance(tokens[0], ast.StringToken) and not _owned(tokens[0].value, mapper):
+            return False
+        return _verify_tokens(rule.prelude, mapper)
+    known = (
+        keyword == "font-face"
+        or keyword in _DECLARATION_AT_RULES
+        or keyword in _NESTING_AT_RULES
+        or keyword in _KEYFRAME_AT_RULES
+    )
+    if not known or not _verify_tokens(rule.prelude, mapper):
+        return False
+    if rule.content is None:
+        return True
+    if keyword in _NESTING_AT_RULES or keyword in _KEYFRAME_AT_RULES:
+        return _verify_rules(
+            tinycss2.parse_rule_list(rule.content, skip_comments=True, skip_whitespace=True),
+            mapper,
+            depth + 1,
+        )
+    return _verify_items(rule.content, mapper, depth)
+
+
+def _verify_rules(rules: list[Any], mapper: UrlMapper, depth: int) -> bool:
+    for rule in rules:
+        if isinstance(rule, ast.QualifiedRule) and not _verify_rule(rule, mapper, depth):
+            return False
+        if isinstance(rule, ast.AtRule) and not _verify_at_rule(rule, mapper, depth):
+            return False
+    return True
+
+
+def verify_stylesheet(css: str, mapper: UrlMapper) -> bool:
+    """True only if the stylesheet cannot make a browser contact anything but the gateway."""
+    try:
+        parsed = tinycss2.parse_stylesheet(css, skip_comments=True, skip_whitespace=True)
+        return _verify_rules(parsed, mapper, 0)
+    except Exception:  # anything unexpected counts as unverified
+        return False
+
+
+def verify_declarations(css: str, mapper: UrlMapper) -> bool:
+    """The same check for the value of a ``style`` attribute."""
+    try:
+        for item in tinycss2.parse_declaration_list(css, skip_comments=True, skip_whitespace=True):
+            if isinstance(item, ast.Declaration):
+                if item.lower_name in _BLOCKED_PROPERTIES:
+                    return False
+                if not _verify_tokens(item.value, mapper):
+                    return False
+    except Exception:  # anything unexpected counts as unverified
+        return False
+    return True

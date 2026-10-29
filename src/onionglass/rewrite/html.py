@@ -25,7 +25,14 @@ import nh3
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from onionglass.onion import InvalidOnionError, OnionUrl, parse_onion_url
-from onionglass.rewrite.css import CssOptions, sanitize_declarations, sanitize_stylesheet
+from onionglass.rewrite.css import (
+    CssError,
+    CssOptions,
+    sanitize_declarations,
+    sanitize_stylesheet,
+    verify_declarations,
+    verify_stylesheet,
+)
 from onionglass.rewrite.urls import Resolved, UrlMapper, resolve_reference
 
 MAX_DEPTH = 400
@@ -33,6 +40,12 @@ MAX_TEXT_ATTRIBUTE = 1000
 MAX_SHORT_ATTRIBUTE = 200
 MAX_TITLE = 200
 
+# Only encodings that browsers themselves decode. Python knows many more, some of which are not
+# text encodings at all, and a page must not be able to pick one of those.
+_BROWSER_CHARSET_PREFIXES = (
+    "utf-8", "utf-16", "ascii", "latin-1", "iso8859-", "cp125", "cp874", "koi8-", "euc-",
+    "gb", "big5", "shift", "cp932", "cp949", "iso2022-jp", "mac-",
+)  # fmt: skip
 _DROP_WITH_CONTENT = frozenset(
     {
         "script", "iframe", "frame", "frameset", "noframes", "object", "embed", "applet",
@@ -171,6 +184,7 @@ class HtmlOptions:
     allow_password_fields: bool = True
     max_bytes: int = 5_000_000
     max_nodes: int = 200_000
+    max_tags: int = 30_000
     max_output_bytes: int = 12_000_000
 
     @property
@@ -201,10 +215,10 @@ def decode_document(data: bytes, declared_charset: str | None = None) -> str:
             continue
         try:
             info = codecs.lookup(name.strip().strip("\"'"))
-        except LookupError:
+            if info.name.startswith(_BROWSER_CHARSET_PREFIXES):
+                return data.decode(info.name, errors="replace")
+        except (LookupError, UnicodeError, ValueError):
             continue
-        if getattr(info, "_is_text_encoding", True):
-            return data.decode(info.name, errors="replace")
     return data.decode("utf-8", errors="replace")
 
 
@@ -391,8 +405,11 @@ class _Emitter:
             if child.tag == "-text":
                 text += child.text_content or ""
             child = child.next
-        css = sanitize_stylesheet(text, self.base, self.mapper, self.options.css)
-        if not css:
+        try:
+            css = sanitize_stylesheet(text, self.base, self.mapper, self.options.css)
+        except CssError:
+            return  # a stylesheet that cannot be processed is left out, not passed on
+        if not css or not verify_stylesheet(css, self.mapper):
             return
         media = node.attributes.get("media") or ""
         media_attr = ""
@@ -529,7 +546,7 @@ class _Emitter:
             current = current.next
 
 
-def _final_pass(fragment: str, base: OnionUrl, mapper: UrlMapper, options: HtmlOptions) -> str:
+def _final_pass(fragment: str, mapper: UrlMapper) -> str:
     """A second, independent allowlist pass over the emitted markup."""
 
     def attribute_filter(tag: str, attribute: str, value: str) -> str | None:
@@ -543,8 +560,7 @@ def _final_pass(fragment: str, base: OnionUrl, mapper: UrlMapper, options: HtmlO
                 return value
             return None
         if attribute == "style":
-            cleaned = sanitize_declarations(value, base, mapper, options.css)
-            return cleaned or None
+            return value if verify_declarations(value, mapper) else None
         if tag == "input" and attribute == "type" and value not in _INPUT_TYPES:
             return None
         if attribute == "rel":
@@ -571,7 +587,7 @@ def _language(root: LexborNode) -> str:
     return ""
 
 
-def rewrite_html(
+def _rewrite_html(
     data: bytes,
     base: OnionUrl,
     mapper: UrlMapper,
@@ -579,11 +595,13 @@ def rewrite_html(
     options: HtmlOptions | None = None,
     charset: str | None = None,
 ) -> RewriteResult:
-    """Rewrite one HTML page fetched from ``base`` so the gateway can serve it."""
     options = options or HtmlOptions()
     if len(data) > options.max_bytes:
         raise RewriteError("page is too large")
     text = decode_document(data, charset)
+    if text.count("<") > options.max_tags:
+        # Some hostile markup makes HTML parsing take quadratic time. Refuse it up front.
+        raise RewriteError("page has too many tags")
     tree = LexborHTMLParser(text)
     root = tree.root
     if root is None:
@@ -593,7 +611,7 @@ def rewrite_html(
     fragment = "".join(emitter.out)
     if len(fragment) > options.max_output_bytes:
         raise RewriteError("rewritten page is too large")
-    cleaned = _final_pass(fragment, emitter.base, mapper, options)
+    cleaned = _final_pass(fragment, mapper)
     notice = ""
     if emitter.refresh_url:
         escaped = html_lib.escape(emitter.refresh_url, quote=True)
@@ -601,7 +619,7 @@ def rewrite_html(
             f'<p class="og-notice" style="{_NOTICE_STYLE}">This page asked to redirect '
             f'automatically. Automatic redirects are off. <a href="{escaped}">Follow it</a>.</p>'
         )
-        notice = _final_pass(notice, emitter.base, mapper, options)
+        notice = _final_pass(notice, mapper)
     lang = _language(root)
     lang_attribute = f' lang="{html_lib.escape(lang, quote=True)}"' if lang else ""
     document = (
@@ -636,5 +654,25 @@ def _effective_base(tree: LexborHTMLParser, base: OnionUrl, mapper: UrlMapper) -
         return base
     try:
         return parse_onion_url(urljoin(base.url, href))
-    except InvalidOnionError:
+    except (InvalidOnionError, ValueError):
         return base
+
+
+def rewrite_html(
+    data: bytes,
+    base: OnionUrl,
+    mapper: UrlMapper,
+    *,
+    options: HtmlOptions | None = None,
+    charset: str | None = None,
+) -> RewriteResult:
+    """Rewrite one HTML page fetched from ``base`` so the gateway can serve it.
+
+    Raises ``RewriteError`` for any page that cannot be rewritten safely, whatever the reason.
+    """
+    try:
+        return _rewrite_html(data, base, mapper, options=options, charset=charset)
+    except RewriteError:
+        raise
+    except Exception as exc:  # unexpected input must end in a refusal, never a crash
+        raise RewriteError("page could not be rewritten") from exc

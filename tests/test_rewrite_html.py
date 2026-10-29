@@ -510,7 +510,7 @@ def test_a_page_cannot_grow_a_lot_when_rewritten() -> None:
 
 
 def test_extremely_deep_nesting_does_not_crash() -> None:
-    result = rewrite("<div>" * 20000 + "deep" + "</div>" * 20000)
+    result = rewrite("<div>" * 10000 + "deep" + "</div>" * 10000)
     assert_safe_output(result.body, MAPPER)
     assert rewrite("<b>" * 5000).body
 

@@ -68,6 +68,8 @@ ignore = ["PLR2004"]
 # A SOCKS exchange needs the target, proxy and credentials; the default password is not a secret.
 "src/onionglass/socks.py" = ["PLR0913", "PLR0917", "S107"]
 "src/onionglass/upstream.py" = ["PLR0912"]
+# Parsing a header is a run of guard clauses that each reject the input.
+"src/onionglass/cookies.py" = ["PLR0911"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -111,8 +111,8 @@ def resolve_reference(reference: str, base: OnionUrl, mapper: UrlMapper) -> Reso
     scheme = _scheme(text)
     if scheme is not None and scheme not in ("http", "https"):
         return _dropped("non_web_link" if scheme in _NON_WEB_SCHEMES else "unsafe_scheme")
-    joined = urljoin(base.url, text)
     try:
+        joined = urljoin(base.url, text)
         parts = urlsplit(joined)
     except ValueError:
         return _dropped("unparseable")

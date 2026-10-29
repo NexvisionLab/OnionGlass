@@ -25,6 +25,10 @@ classifiers = [
 ]
 dependencies = [
   "cryptography>=50,<51",
+  "h11>=0.16,<1",
+  "nh3>=0.3.7,<0.4",
+  "selectolax>=1.0.2,<2",
+  "tinycss2>=1.5,<2",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +38,7 @@ dev = [
   "pytest==9.2.0",
   "pytest-cov==7.1.0",
   "hypothesis==6.170.13",
+  "pytest-timeout==2.4.0",
   "pip-audit==2.10.1",
 ]
 
@@ -55,7 +60,14 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "PT", "TID", "
 ignore = ["PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S603", "S607", "PLR0913"]
+"tests/**" = ["S101", "S105", "S603", "S607", "PLR0913", "E501", "PT018"]
+# The rewriter is allowlist dispatch code: many small branches by design.
+"src/onionglass/rewrite/*" = ["PLR0911", "PLR0912", "PLR0915"]
+# Building a request header set is naturally keyword-heavy.
+"src/onionglass/headers.py" = ["PLR0913"]
+# A SOCKS exchange needs the target, proxy and credentials; the default password is not a secret.
+"src/onionglass/socks.py" = ["PLR0913", "PLR0917", "S107"]
+"src/onionglass/upstream.py" = ["PLR0912"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -63,9 +75,13 @@ strict = true
 warn_unreachable = true
 files = ["src", "tests"]
 
+[[tool.mypy.overrides]]
+module = ["tinycss2", "tinycss2.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
+addopts = "-ra --strict-markers --strict-config --timeout=30"
 markers = [
   "network: needs a real Tor connection, run only in the scheduled job",
 ]

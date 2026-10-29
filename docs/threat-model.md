@@ -94,10 +94,14 @@ Anonymity of the visitor against the operator, circumventing law enforcement or 
 
 | Property | Status | Tests |
 |---|---|---|
-| P5 only valid v3 onion destinations | Partly covered: address, host and URL validation | `tests/test_onion.py` |
+| P1 no script executes | Rewriter output and sandbox header covered. Not yet tested in a real browser | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_headers.py` |
+| P2 no third-party contact | Covered for rewritten pages and stylesheets. The request path is not built yet | `tests/test_rewrite_urls.py`, `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py` |
+| P4 nothing identifying reaches the onion site | Covered for upstream requests. Cookie handling is not built yet | `tests/test_headers.py`, `tests/test_upstream.py` |
+| P5 only valid v3 onion destinations | Covered for parsing and for the Tor fetcher | `tests/test_onion.py`, `tests/test_upstream.py` |
+| P6 withheld images never requested | Covered in the rewriter. Not yet checked end to end | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py` |
 | P9 tickets cannot be forged or replayed | Covered | `tests/test_tickets.py` |
 | P11 onion address absent from host names | Covered for label generation and mapping | `tests/test_labels.py`, `tests/test_hosts.py` |
-| P1 to P4, P6 to P8, P10 | Not yet implemented | none |
+| P3, P7, P8, P10 | Not yet implemented | none |
 
 ## 9. How this is kept honest
 

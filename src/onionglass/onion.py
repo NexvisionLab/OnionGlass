@@ -80,9 +80,42 @@ class OnionHost:
     address: str
     subdomains: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        # An OnionHost can only exist if it is valid, so no later code has to re-check it.
+        if normalise_address(self.address) != self.address:
+            raise InvalidOnionError("onion address must be lower case")
+        if len(self.subdomains) > MAX_SUBDOMAINS:
+            raise InvalidOnionError("too many host labels")
+        for label in self.subdomains:
+            _check_label(label)
+
     @property
     def hostname(self) -> str:
         return ".".join((*self.subdomains, f"{self.address}.onion"))
+
+
+@dataclass(frozen=True, slots=True)
+class OnionOrigin:
+    """A web origin on an onion host: scheme, host and port.
+
+    ``http`` and ``https`` on the same onion are different origins, as are different
+    virtual-host labels. The gateway gives each origin its own browser origin.
+    """
+
+    scheme: str
+    host: OnionHost
+    port: int
+
+    def __post_init__(self) -> None:
+        if self.scheme not in DEFAULT_PORTS:
+            raise InvalidOnionError("only http and https are allowed")
+        if not 1 <= self.port <= 65535:
+            raise InvalidOnionError("port is out of range")
+
+    @property
+    def key(self) -> str:
+        """A canonical text form that always includes the port."""
+        return f"{self.scheme}://{self.host.hostname}:{self.port}"
 
 
 def _check_label(label: str) -> None:
@@ -122,6 +155,10 @@ class OnionUrl:
     port: int
     path: str
     query: str
+
+    @property
+    def origin(self) -> OnionOrigin:
+        return OnionOrigin(self.scheme, self.host, self.port)
 
     @property
     def url(self) -> str:
@@ -172,3 +209,8 @@ def parse_onion_url(url: str, *, allowed_ports: frozenset[int] = DEFAULT_ALLOWED
     if not path.startswith("/"):
         raise InvalidOnionError("path must start with a slash")
     return OnionUrl(scheme=scheme, host=host, port=port, path=path, query=parts.query)
+
+
+def parse_origin_key(key: str) -> OnionOrigin:
+    """Parse the text form produced by ``OnionOrigin.key``."""
+    return parse_onion_url(key + "/", allowed_ports=frozenset(range(1, 65536))).origin

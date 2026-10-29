@@ -17,11 +17,14 @@ from onionglass.labels import (
     is_valid_session_id,
     new_label,
 )
+from onionglass.onion import InvalidOnionError, OnionHost, OnionOrigin, parse_onion_host
 from onionglass.store import InMemoryStore
 
 TOR_PROJECT = "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid"
 DUCKDUCKGO = "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad"
 SESSION = "session-aaaaaaaa"
+ORIGIN = OnionOrigin("http", OnionHost(TOR_PROJECT), 80)
+OTHER_ORIGIN = OnionOrigin("http", OnionHost(DUCKDUCKGO), 80)
 
 
 class FakeClock:
@@ -41,10 +44,13 @@ def test_new_labels_have_the_right_shape_and_are_unique() -> None:
 def test_label_is_stable_for_a_session_and_onion_and_resolves_back() -> None:
     async def scenario() -> None:
         book = LabelBook(InMemoryStore(), ttl=600)
-        first = await book.label_for(SESSION, TOR_PROJECT)
-        again = await book.label_for(SESSION, TOR_PROJECT.upper())
+        upper_case_origin = OnionOrigin(
+            "http", parse_onion_host(TOR_PROJECT.upper() + ".ONION"), 80
+        )
+        first = await book.label_for(SESSION, ORIGIN)
+        again = await book.label_for(SESSION, upper_case_origin)
         assert first == again
-        assert await book.resolve(first) == LabelTarget(session_id=SESSION, address=TOR_PROJECT)
+        assert await book.resolve(first) == LabelTarget(session_id=SESSION, origin=ORIGIN)
 
     asyncio.run(scenario())
 
@@ -52,9 +58,9 @@ def test_label_is_stable_for_a_session_and_onion_and_resolves_back() -> None:
 def test_different_sessions_and_onions_get_different_labels() -> None:
     async def scenario() -> None:
         book = LabelBook(InMemoryStore(), ttl=600)
-        a = await book.label_for(SESSION, TOR_PROJECT)
-        b = await book.label_for(SESSION, DUCKDUCKGO)
-        c = await book.label_for("session-bbbbbbbb", TOR_PROJECT)
+        a = await book.label_for(SESSION, ORIGIN)
+        b = await book.label_for(SESSION, OTHER_ORIGIN)
+        c = await book.label_for("session-bbbbbbbb", ORIGIN)
         assert len({a, b, c}) == 3
 
     asyncio.run(scenario())
@@ -64,7 +70,7 @@ def test_the_onion_address_is_not_visible_in_the_host_name() -> None:
     async def scenario() -> None:
         book = LabelBook(InMemoryStore(), ttl=600)
         hosts = GatewayHosts("gateway.example")
-        label = await book.label_for(SESSION, TOR_PROJECT)
+        label = await book.label_for(SESSION, ORIGIN)
         host = hosts.host_for(label)
         assert TOR_PROJECT not in host
         assert TOR_PROJECT[:12] not in host
@@ -77,7 +83,7 @@ def test_the_onion_address_is_not_visible_in_the_host_name() -> None:
 def test_concurrent_requests_for_the_same_pair_get_one_label() -> None:
     async def scenario() -> None:
         book = LabelBook(InMemoryStore(), ttl=600)
-        labels = await asyncio.gather(*(book.label_for(SESSION, TOR_PROJECT) for _ in range(25)))
+        labels = await asyncio.gather(*(book.label_for(SESSION, ORIGIN) for _ in range(25)))
         assert len(set(labels)) == 1
         assert await book.resolve(labels[0]) is not None
 
@@ -88,7 +94,7 @@ def test_unknown_malformed_and_expired_labels_do_not_resolve() -> None:
     async def scenario() -> None:
         clock = FakeClock()
         book = LabelBook(InMemoryStore(clock=clock), ttl=60)
-        label = await book.label_for(SESSION, TOR_PROJECT)
+        label = await book.label_for(SESSION, ORIGIN)
         assert await book.resolve(new_label()) is None
         for bad in (
             "",
@@ -111,9 +117,13 @@ def test_invalid_inputs_are_refused() -> None:
         book = LabelBook(InMemoryStore(), ttl=60)
         for session in ("", "short", "has:colon-1", "has space 1", "x" * 65, "new\nline-1"):
             with pytest.raises(LabelError):
-                await book.label_for(session, TOR_PROJECT)
-        with pytest.raises(LabelError):
-            await book.label_for(SESSION, "not-an-onion")
+                await book.label_for(session, ORIGIN)
+        with pytest.raises(InvalidOnionError):
+            OnionHost("not-an-onion")
+        with pytest.raises(InvalidOnionError):
+            OnionOrigin("ftp", OnionHost(TOR_PROJECT), 80)
+        with pytest.raises(InvalidOnionError):
+            OnionOrigin("http", OnionHost(TOR_PROJECT), 0)
 
     asyncio.run(scenario())
 
@@ -158,7 +168,7 @@ class RacingStore(InMemoryStore):
 def test_a_label_collision_is_retried() -> None:
     async def scenario() -> None:
         store = CollidingStore()
-        label = await LabelBook(store, ttl=60).label_for(SESSION, TOR_PROJECT)
+        label = await LabelBook(store, ttl=60).label_for(SESSION, ORIGIN)
         assert store.collisions_left == 0
         assert is_valid_label(label)
 
@@ -168,7 +178,7 @@ def test_a_label_collision_is_retried() -> None:
 def test_losing_a_race_uses_the_winner_and_leaves_no_stray_entry() -> None:
     async def scenario() -> None:
         store = RacingStore()
-        label = await LabelBook(store, ttl=60).label_for(SESSION, TOR_PROJECT)
+        label = await LabelBook(store, ttl=60).label_for(SESSION, ORIGIN)
         assert label == RacingStore.WINNER
         # Only the forward entry written by the "winner" remains: the loser's reverse entry
         # was removed again.

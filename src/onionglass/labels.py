@@ -15,7 +15,7 @@ import json
 import secrets
 from dataclasses import dataclass
 
-from onionglass.onion import InvalidOnionError, normalise_address
+from onionglass.onion import InvalidOnionError, OnionOrigin, parse_origin_key
 from onionglass.store import SessionStore
 
 LABEL_BYTES = 16
@@ -49,7 +49,7 @@ class LabelTarget:
     """What a label stands for."""
 
     session_id: str
-    address: str
+    origin: OnionOrigin
 
 
 class LabelBook:
@@ -59,19 +59,15 @@ class LabelBook:
         self._store = store
         self._ttl = ttl
 
-    async def label_for(self, session_id: str, address: str) -> str:
-        """The label for this session and onion. Created on first use, stable afterwards."""
+    async def label_for(self, session_id: str, origin: OnionOrigin) -> str:
+        """The label for this session and onion origin. Created on first use, stable after."""
         if not is_valid_session_id(session_id):
             raise LabelError("invalid session id")
-        try:
-            normalised = normalise_address(address)
-        except InvalidOnionError as exc:
-            raise LabelError("invalid onion address") from exc
-        forward_key = f"lbl:{session_id}:{normalised}"
+        forward_key = f"lbl:{session_id}:{origin.key}"
         existing = await self._store.get(forward_key)
         if existing is not None:
             return existing
-        reverse_value = json.dumps([session_id, normalised], separators=(",", ":"))
+        reverse_value = json.dumps([session_id, origin.key], separators=(",", ":"))
         for _ in range(_ATTEMPTS):
             candidate = new_label()
             if not await self._store.add_if_absent(f"rev:{candidate}", reverse_value, self._ttl):
@@ -86,14 +82,14 @@ class LabelBook:
         raise LabelError("could not allocate a label")
 
     async def resolve(self, label: str) -> LabelTarget | None:
-        """The session and onion behind a label, or None if unknown or expired."""
+        """The session and onion origin behind a label, or None if unknown or expired."""
         if not is_valid_label(label):
             return None
         raw = await self._store.get(f"rev:{label}")
         if raw is None:
             return None
         try:
-            session_id, address = json.loads(raw)
-            return LabelTarget(session_id=session_id, address=normalise_address(address))
+            session_id, origin_key = json.loads(raw)
+            return LabelTarget(session_id=session_id, origin=parse_origin_key(origin_key))
         except (ValueError, TypeError, InvalidOnionError):
             return None

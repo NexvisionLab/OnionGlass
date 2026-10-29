@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "onionglass"
+version = "0.0.0"
+description = "A self-hostable gateway for viewing .onion sites in an ordinary browser, with isolation, policy and evidence capture built in."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "NexvisionLab" }]
+keywords = ["tor", "onion", "gateway", "security", "osint", "evidence"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Information Technology",
+  "License :: OSI Approved :: GNU Affero General Public License v3",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "ruff==0.17.3",
+  "mypy==2.4.1",
+  "pytest==9.2.0",
+  "pytest-cov==7.1.0",
+  "hypothesis==6.170.13",
+  "pip-audit==2.10.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/NexvisionLab/onionglass"
+Issues = "https://github.com/NexvisionLab/onionglass/issues"
+Security = "https://github.com/NexvisionLab/onionglass/security/policy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/onionglass"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "PT", "TID", "PL"]
+ignore = ["PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S603", "S607", "PLR0913"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "network: needs a real Tor connection, run only in the scheduled job",
+]
+
+[tool.coverage.run]
+source = ["onionglass"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true

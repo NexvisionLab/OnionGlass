@@ -23,7 +23,9 @@ classifiers = [
   "Topic :: Security",
   "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+  "cryptography>=50,<51",
+]
 
 [project.optional-dependencies]
 dev = [

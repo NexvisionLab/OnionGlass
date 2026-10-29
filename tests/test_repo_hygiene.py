@@ -31,7 +31,7 @@ FORBIDDEN_TRAILER_HASHES = frozenset(
 )
 
 ALLOWED_EMAIL_SUFFIX = "@users.noreply.github.com"
-ALLOWED_EMAILS = frozenset({"noreply@github.com"})
+ALLOWED_EMAILS = frozenset({"noreply" + "@github.com"})
 
 WORD = re.compile(r"[a-z0-9]+")
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
@@ -136,3 +136,33 @@ def test_commit_identities_are_no_reply_addresses() -> None:
         for email in chunk.split():
             ok = email.endswith(ALLOWED_EMAIL_SUFFIX) or email in ALLOWED_EMAILS
             assert ok, "commit identity is not a no-reply address"
+
+
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+ALLOWED_EMAIL_DOMAINS = frozenset(
+    {"users.noreply.github.com", "example.com", "example.org", "example.net"}
+)
+# Reserved or non-routable top-level names are safe in examples and attack-input fixtures.
+RESERVED_TLD_SUFFIXES = (".example", ".invalid", ".test", ".localhost", ".onion")
+# Built from pieces so this file does not contain the markers it searches for.
+HOME_PATH_MARKERS = ("c:" + "\\us" + "ers\\", "c:" + "/us" + "ers/", "/us" + "ers/", "/ho" + "me/")
+
+
+def test_no_real_email_addresses_in_files() -> None:
+    for path in _project_files():
+        if not _is_text(path) or path.name == "LICENSE":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for domain in EMAIL.findall(text):
+            name = domain.lower()
+            allowed = name in ALLOWED_EMAIL_DOMAINS or name.endswith(RESERVED_TLD_SUFFIXES)
+            assert allowed, f"email address in {path}"
+
+
+def test_no_home_directory_paths_in_files() -> None:
+    for path in _project_files():
+        if not _is_text(path) or path.name == "LICENSE":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        for marker in HOME_PATH_MARKERS:
+            assert marker not in text, f"home directory path in {path}"

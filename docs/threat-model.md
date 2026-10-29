@@ -90,7 +90,16 @@ These are the properties tests must prove.
 
 Anonymity of the visitor against the operator, circumventing law enforcement or legal obligations, hosting onion services, and protecting content that a visitor chooses to reveal or download.
 
-## 8. How this is kept honest
+## 8. Which tests prove which property
+
+| Property | Status | Tests |
+|---|---|---|
+| P5 only valid v3 onion destinations | Partly covered: address, host and URL validation | `tests/test_onion.py` |
+| P9 tickets cannot be forged or replayed | Covered | `tests/test_tickets.py` |
+| P11 onion address absent from host names | Covered for label generation and mapping | `tests/test_labels.py`, `tests/test_hosts.py` |
+| P1 to P4, P6 to P8, P10 | Not yet implemented | none |
+
+## 9. How this is kept honest
 
 - Each property has a named test in the `tests` directory. A property without a test is a bug.
 - A hostile-input corpus grows with every report.

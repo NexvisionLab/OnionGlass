@@ -38,6 +38,10 @@ class Settings:
     profile: Profile = field(default_factory=Profile)
     max_request_body: int = 1_000_000
     max_labels_per_session: int = 1000
+    max_labels_per_page: int = 100
+    max_new_sessions_per_minute: int = 30
+    max_concurrent_fetches: int = 32
+    max_fetches_per_session: int = 6
     keys: KeyRing | None = None
     open_mode: bool = False
 

@@ -433,7 +433,7 @@ def test_title_language_and_skeleton() -> None:
     assert result.title == "Bonjour & salut"
     assert out.startswith('<!DOCTYPE html><html lang="fr-CA">')
     assert "<title>Bonjour &amp; salut</title>" in out
-    assert '<meta name="referrer" content="no-referrer">' in out
+    assert '<meta name="referrer" content="same-origin">' in out
     assert '<meta charset="utf-8">' in out
 
 

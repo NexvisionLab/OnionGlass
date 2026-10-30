@@ -86,6 +86,12 @@ These are the properties tests must prove.
 - **Lookalike sites.** The gateway can warn about lookalike addresses but cannot tell a visitor which site is the real one.
 - **Evidence timestamps** depend on an external authority the operator chooses.
 
+- **Entering through a link.** Opening the gateway's entry address with a ticket signs the visitor in, so a hostile page could make a visitor's browser sign in as someone else (login CSRF). The ticket is single-use and the attacker would need one of their own, which gives them nothing beyond the ability to put a visitor in their own session. A confirmation step is planned.
+- **Replay protection is per process.** Ticket replay (P9) is tracked in the gateway's own memory. Running several gateway processes behind one address needs a shared store before the property holds across them.
+- **Viewer record.** The viewer page remembers the current address, frame and title for each session so it can show them. That record is per session and is deleted with it, but it exists.
+- **One Tor circuit group per session.** All onions a visitor opens in one session share an isolation key, derived from the session so the identifier itself never reaches Tor. Two onions the same visitor opens can therefore be linked by an operator of both. Per-onion isolation is planned.
+- **Same-site is read from the browser's own headers.** Cookie `SameSite` rules depend on `Sec-Fetch-Site`. A browser that sends no such header is treated as cross-origin, so cookies are withheld rather than leaked, which can break login on very old browsers.
+
 ## 7. Out of scope
 
 Anonymity of the visitor against the operator, circumventing law enforcement or legal obligations, hosting onion services, and protecting content that a visitor chooses to reveal or download.
@@ -96,8 +102,8 @@ Anonymity of the visitor against the operator, circumventing law enforcement or 
 |---|---|---|
 | P1 no script executes | Covered end to end, and checked by hand in a real browser (section 9) | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_rewrite_review.py`, `tests/test_headers.py`, `tests/test_gateway.py` |
 | P2 no third-party contact | Covered end to end, and checked by hand in a real browser. Verification of finished CSS is separate from the rewriter | `tests/test_rewrite_urls.py`, `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
-| P3 one onion cannot read another's data | Covered for cookies, labels and sessions. Browser origin separation is by design and not yet tested in a browser | `tests/test_cookies.py`, `tests/test_gateway.py`, `tests/test_labels.py` |
-| P4 nothing identifying reaches the onion site | Covered for requests and for cookies kept on the server | `tests/test_headers.py`, `tests/test_upstream.py`, `tests/test_cookies.py`, `tests/test_gateway.py` |
+| P3 one onion cannot read another's data | Covered for cookies (including `SameSite` and the `Origin` a cross-origin post carries), labels and sessions. Browser origin separation is by design and not yet tested in a browser | `tests/test_cookies.py`, `tests/test_gateway.py`, `tests/test_labels.py` |
+| P4 nothing identifying reaches the onion site | Covered for requests, for cookies kept on the server, for the multipart boundary and for the session identifier never reaching Tor | `tests/test_review_fixes.py`, `tests/test_headers.py`, `tests/test_upstream.py`, `tests/test_cookies.py`, `tests/test_gateway.py` |
 | P5 only valid v3 onion destinations | Covered for parsing, requests and the Tor fetcher | `tests/test_onion.py`, `tests/test_upstream.py`, `tests/test_gateway.py` |
 | P6 withheld images never requested | Covered end to end, and checked by hand in a real browser | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_gateway.py` |
 | P7 fail closed | Partly: rewrite and decode failures refuse. Policy and audit dependencies do not exist yet | `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
@@ -122,7 +128,24 @@ This found one real bug that the automated tests had missed: with a `no-referrer
 
 Not covered by this check: the entry form's redirect to a label host could not be completed in the test browser, which aborted the redirect to a different host name (the gateway's reply was confirmed correct with curl, and opening the label address directly worked); the browser's behaviour with the viewer page and a sandboxed frame, which does not exist yet; and anything involving a real Tor connection. An automated browser test for the properties above is planned.
 
-## 10. How this is kept honest
+## 10. Independent reviews
+
+Two reviews were run by reviewers who had not seen the code being written, each told to attack it.
+
+The first found that an unquoted `url()` inside `image-set()` survived the stylesheet rewrite (a real break of P2 and P6), that malformed IPv6 references and charset names raised the wrong exceptions, and that very large pages parsed in quadratic time. All were fixed, an independent verification pass over finished CSS was added, and each has a test in `tests/test_rewrite_review.py`.
+
+The second review looked at the gateway around the rewriter. It found, and the fixes are in with tests in `tests/test_review_fixes.py`:
+
+- Cookies were sent to an onion whatever page asked. `SameSite` is now applied from the browser's request headers.
+- A cross-origin form post carried the target's own `Origin`. It now carries `null`, and label pages send a referrer only to their own origin.
+- The session identifier was used as the Tor isolation key. A key derived with a secret is used instead.
+- A visitor could exhaust the label allowance, the store, the number of new sessions or the number of concurrent fetches. Each now has a limit and a clear refusal.
+- A site could send endless interim replies, a body with a 204 or 304, or a second `Host` header. These are now refused or ignored.
+- A multipart body gave the site a boundary that identifies the visitor's browser. It is rewritten to a fresh one.
+
+Each fix was checked by undoing it and confirming a test fails. The remaining items are the limits listed in section 6. Attack classes not yet reviewed: charset lead-byte tricks and grammar-based fuzzing of the CSS and HTML parsers.
+
+## 11. How this is kept honest
 
 - Each property has a named test in the `tests` directory. A property without a test is a bug.
 - A hostile-input corpus grows with every report.

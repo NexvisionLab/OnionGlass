@@ -626,7 +626,7 @@ def _rewrite_html(
         "<!DOCTYPE html>"
         f"<html{lang_attribute}><head>"
         '<meta charset="utf-8">'
-        '<meta name="referrer" content="no-referrer">'
+        '<meta name="referrer" content="same-origin">'
         '<meta name="robots" content="noindex, nofollow">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{html_lib.escape(emitter.title, quote=False)}</title>"

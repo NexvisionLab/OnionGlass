@@ -62,7 +62,15 @@ class LabelBook:
         self._ttl = ttl
         self._max_per_session = max_per_session
 
-    async def label_for(self, session_id: str, origin: OnionOrigin) -> str:
+    async def peek(self, session_id: str, origin: OnionOrigin) -> str | None:
+        """The label this session already has for the origin, without making one."""
+        if not is_valid_session_id(session_id):
+            return None
+        return await self._store.get(f"lbl:{session_id}:{origin.key}")
+
+    async def label_for(
+        self, session_id: str, origin: OnionOrigin, *, reserved: bool = False
+    ) -> str:
         """The label for this session and onion origin. Created on first use, stable after."""
         if not is_valid_session_id(session_id):
             raise LabelError("invalid session id")
@@ -72,8 +80,10 @@ class LabelBook:
             return existing
         count_key = f"lblcount:{session_id}"
         used = int(await self._store.get(count_key) or 0)
-        if self._max_per_session is not None and used >= self._max_per_session:
-            # A hostile page can name endless sites. Each session gets a fixed number of labels.
+        # Each session gets a fixed number of labels for links. Labels for addresses the visitor
+        # types are reserved: a hostile page that names endless sites can use up the allowance
+        # for links, but not for what the visitor opens themselves.
+        if not reserved and self._max_per_session is not None and used >= self._max_per_session:
             raise LabelError("too many sites in this session")
         reverse_value = json.dumps([session_id, origin.key], separators=(",", ":"))
         for _ in range(_ATTEMPTS):
@@ -81,7 +91,8 @@ class LabelBook:
             if not await self._store.add_if_absent(f"rev:{candidate}", reverse_value, self._ttl):
                 continue
             if await self._store.add_if_absent(forward_key, candidate, self._ttl):
-                await self._store.put(count_key, str(used + 1), self._ttl)
+                if not reserved:
+                    await self._store.put(count_key, str(used + 1), self._ttl)
                 return candidate
             # Another request created a label for this pair first. Use theirs.
             await self._store.delete(f"rev:{candidate}")

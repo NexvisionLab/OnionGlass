@@ -5,7 +5,8 @@ Everything about talking to the onion site is in this module, and it is delibera
 
 * P5: it only connects to a validated onion origin, and refuses anything else
 * P4: it sends only an allowlisted set of headers, built by ``headers.upstream_request_headers``
-* every request gets its own isolation credential, so visitors never share a Tor circuit
+* every visitor session gets its own isolation credential, so visitors never share a Tor
+  circuit. The credential is derived from the session, never the session identifier itself
 * it never follows redirects. Each hop goes back through the gateway's policy checks
 * size and time limits apply to every part of the exchange
 """
@@ -45,6 +46,7 @@ _ALLOWED_REQUEST_HEADERS = frozenset(
 _ISOLATION_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 _READ_SIZE = 65536
 _CLOSE_WAIT_SECONDS = 2.0
+_MAX_INFORMATIONAL_RESPONSES = 10
 
 
 class UpstreamError(Exception):
@@ -284,6 +286,7 @@ class TorFetcher:
         response_headers: tuple[tuple[str, str], ...] = ()
         chunks: list[bytes] = []
         size = 0
+        informational = 0
         while True:
             try:
                 event = connection.next_event()
@@ -300,6 +303,9 @@ class TorFetcher:
                     raise UpstreamError("connection_closed") from exc
                 connection.receive_data(data)
             elif isinstance(event, h11.InformationalResponse):
+                informational += 1
+                if informational > _MAX_INFORMATIONAL_RESPONSES:
+                    raise UpstreamError("protocol_error")  # a flood of interim replies
                 continue
             elif isinstance(event, h11.Response):
                 status = event.status_code

@@ -82,7 +82,9 @@ def test_only_the_viewer_may_frame_a_page() -> None:
 
 def test_common_privacy_and_hardening_headers() -> None:
     headers = document_headers(POLICY)
-    assert headers["Referrer-Policy"] == "no-referrer"
+    # Pages on the gateway's label hosts send a Referer only to their own origin, which lets a
+    # same-origin form post carry a real Origin and a cross-origin one carry none.
+    assert headers["Referrer-Policy"] == "same-origin"
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["Cross-Origin-Opener-Policy"] == "same-origin"
     assert headers["Cache-Control"] == "no-store"
@@ -230,7 +232,7 @@ def test_post_adds_origin_and_a_checked_content_type() -> None:
     multipart = upstream_request_headers(
         ORIGIN, method="POST", content_type="multipart/form-data; boundary=----abc123"
     )
-    assert multipart["Content-Type"] == 'multipart/form-data; boundary="----abc123"'
+    assert multipart["Content-Type"] == "multipart/form-data; boundary=----abc123"
     assert "Origin" not in upstream_request_headers(ORIGIN, method="GET")
 
 

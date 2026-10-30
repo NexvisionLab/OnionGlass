@@ -97,7 +97,13 @@ class Env:
         )
         self.fetcher = FakeFetcher(handler)
         self.store = InMemoryStore()
-        self.gateway = Gateway(self.settings, fetcher=self.fetcher, store=self.store)
+        self.clock = [1000.0]
+        self.gateway = Gateway(
+            self.settings,
+            fetcher=self.fetcher,
+            store=self.store,
+            clock=lambda: self.clock[0],
+        )
         self.client = TestClient(
             self.gateway.app, base_url=f"http://{APEX}", follow_redirects=False
         )
@@ -116,7 +122,13 @@ class Env:
         return parse_qs(parts.query)["l"][0]
 
     def get(self, label: str, path: str = "/", **kwargs: Any) -> Any:
-        headers = {"host": f"{label}.localhost:{PORT}", **kwargs.pop("headers", {})}
+        # A browser says where a request came from. These tests are the site's own pages unless
+        # they say otherwise.
+        headers = {
+            "host": f"{label}.localhost:{PORT}",
+            "sec-fetch-site": "same-origin",
+            **kwargs.pop("headers", {}),
+        }
         return self.client.get(path, headers=headers, **kwargs)
 
     @staticmethod
@@ -390,7 +402,7 @@ def test_only_get_head_and_post_reach_the_onion_and_head_returns_no_body() -> No
 def test_post_forms_are_forwarded_with_a_checked_content_type() -> None:
     env = Env()
     label = env.open()
-    host = {"host": f"{label}.localhost:{PORT}"}
+    host = {"host": f"{label}.localhost:{PORT}", "sec-fetch-site": "same-origin"}
     response = env.client.post("/search", data={"q": "x y"}, headers=host)
     assert response.status_code == 200
     request = env.fetcher.requests[0]
@@ -699,15 +711,19 @@ def test_the_warning_page_only_accepts_plain_web_addresses(target: str) -> None:
 
 
 def test_a_session_can_only_name_so_many_different_sites() -> None:
-    addresses = [f"http://{TOR_PROJECT}.onion/", f"http://{DUCKDUCKGO}.onion/"]
+    addresses = [f"http://{DUCKDUCKGO}.onion/", f"http://www.{TOR_PROJECT}.onion/"]
     links = "".join(f"<a href='{a}x'>l</a>" for a in addresses)
     env = Env(lambda _r: reply(links), max_labels_per_session=1)
-    label = env.open()  # uses the one label this session is allowed
+    label = env.open()  # the address the visitor types does not count against the allowance
     body = env.get(label).text
     assert ".invalid" not in body
-    assert f"http://localhost:{PORT}/_og/blocked/x" in body or "/_og/blocked" in body
+    assert (
+        body.count(f"http://localhost:{PORT}/_og/blocked/x") == 1
+    )  # one link got a label, one did not
     assert env.client.get("/_og/blocked").status_code == 403
     assert_safe_output(env.get(label).content, Owns())  # type: ignore[arg-type]
+    # With the allowance for links used up, the visitor can still open addresses themselves.
+    assert env.open(f"http://z.{TOR_PROJECT}.onion/")
 
 
 def test_a_label_stops_working_when_its_session_ends() -> None:

@@ -142,6 +142,11 @@ ERRORS: dict[str, tuple[int, str, str]] = {
         "Sign in first",
         "You need to sign in before you can open an address.",
     ),
+    "busy": (
+        429,
+        "Too many requests",
+        "The gateway is busy with other requests. Try again in a moment.",
+    ),
     "session_limit": (
         429,
         "Too many sites",

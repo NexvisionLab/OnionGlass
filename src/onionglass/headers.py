@@ -11,6 +11,7 @@ Security properties:
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -109,6 +110,7 @@ def document_headers(policy: HeaderPolicy) -> dict[str, str]:
     )
     return {
         **_common(policy),
+        "Referrer-Policy": "same-origin",
         "Content-Security-Policy": csp,
         "Content-Type": "text/html; charset=utf-8",
     }
@@ -176,6 +178,7 @@ def resource_headers(policy: HeaderPolicy, content_type: str) -> dict[str, str]:
     """
     return {
         **_common(policy),
+        "Referrer-Policy": "same-origin",
         "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
         "Content-Type": content_type,
     }
@@ -232,8 +235,34 @@ def _request_content_type(value: str) -> str:
         if name.strip().lower() == "boundary":
             boundary = parameter.strip().strip('"')
             if 1 <= len(boundary) <= 70 and set(boundary) <= _BOUNDARY_CHARS:
+                if set(boundary) <= _TOKEN_CHARS:
+                    return f"multipart/form-data; boundary={boundary}"
                 return f'multipart/form-data; boundary="{boundary}"'
     raise ValueError("multipart request has no valid boundary")
+
+
+def normalise_multipart(body: bytes, content_type: str | None) -> tuple[bytes, str | None]:
+    """Give a multipart body a fresh boundary of the kind Tor Browser makes.
+
+    Different browsers choose different boundary styles, and the boundary is chosen by the
+    visitor's browser, so passing it on would tell an onion site which browser a visitor uses.
+    A boundary cannot occur inside the body it delimits, so swapping it is safe.
+    """
+    if content_type is None or parse_content_type(content_type)[0] != "multipart/form-data":
+        return body, content_type
+    boundary = ""
+    for piece in content_type.split(";")[1:]:
+        name, _, parameter = piece.strip().partition("=")
+        if name.strip().lower() == "boundary":
+            boundary = parameter.strip().strip('"')
+    if not 1 <= len(boundary) <= 70 or not set(boundary) <= _BOUNDARY_CHARS:
+        return body, content_type  # the header check will refuse it
+    for _ in range(5):
+        replacement = "----geckoformboundary" + secrets.token_hex(16)
+        if replacement.encode("ascii") not in body:
+            swapped = body.replace(boundary.encode("ascii"), replacement.encode("ascii"))
+            return swapped, f"multipart/form-data; boundary={replacement}"
+    raise ValueError("could not choose a multipart boundary")
 
 
 def upstream_request_headers(
@@ -245,11 +274,13 @@ def upstream_request_headers(
     cookie: str | None = None,
     user_agent: str = DEFAULT_USER_AGENT,
     accept: str = ACCEPT_HTML,
+    same_origin: bool = True,
 ) -> dict[str, str]:
     """The only headers an onion site ever sees. Built from scratch, copying nothing.
 
     The visitor's own headers (address, language, user agent, cookies, anything forwarded) are
-    never passed through. The Referer is only sent when it is a page on the same origin.
+    never passed through. The Referer is only sent when it is a page on the same origin, and
+    ``same_origin`` says whether the request came from that origin's own pages.
     """
     if method not in ALLOWED_METHODS:
         raise ValueError("method is not allowed")
@@ -270,7 +301,8 @@ def upstream_request_headers(
         if parsed is not None and parsed.origin == origin:
             headers["Referer"] = parsed.url
     if method == "POST":
-        headers["Origin"] = f"{origin.scheme}://{authority(origin)}"
+        # A post from another site's page carries no origin a site could trust, as in a browser.
+        headers["Origin"] = f"{origin.scheme}://{authority(origin)}" if same_origin else "null"
         if content_type is not None:
             headers["Content-Type"] = _request_content_type(content_type)
     return headers

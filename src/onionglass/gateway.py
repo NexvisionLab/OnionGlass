@@ -14,12 +14,17 @@ address is written to the log.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import secrets
+import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -27,13 +32,14 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from onionglass import pages
-from onionglass.cookies import CookieJar
+from onionglass.cookies import CookieJar, RequestContext
 from onionglass.decode import DecodeError, decode_body
 from onionglass.headers import (
     ACCEPT_ANY,
     ACCEPT_HTML,
     apex_headers,
     document_headers,
+    normalise_multipart,
     parse_content_type,
     resource_headers,
     upstream_request_headers,
@@ -51,6 +57,11 @@ from onionglass.tickets import TicketError, TicketVerifier
 from onionglass.upstream import Fetcher, UpstreamError, UpstreamRequest, UpstreamResponse
 
 _log = logging.getLogger("onionglass")
+
+
+class _TooBusyError(Exception):
+    """Too many new sessions in a short time."""
+
 
 _HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
 _FONT_TYPES = frozenset(
@@ -97,9 +108,11 @@ class Gateway:
         *,
         fetcher: Fetcher,
         store: SessionStore | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.settings = settings
         self.fetcher = fetcher
+        self._clock = clock
         self.store = store or InMemoryStore()
         self.labels = LabelBook(
             self.store, ttl=settings.session_ttl, max_per_session=settings.max_labels_per_session
@@ -108,6 +121,12 @@ class Gateway:
         self.verifier = (
             TicketVerifier(settings.keys, settings.audience) if settings.keys is not None else None
         )
+        # What follows is per process and rebuilt on restart, which is the point: a restart
+        # starts every session on a new Tor circuit, and no secret is kept on disk.
+        self._isolation_secret = secrets.token_bytes(32)
+        self._active_fetches = 0
+        self._active_by_session: dict[str, int] = {}
+        self._new_sessions: deque[float] = deque()
         self.app = Starlette(
             routes=[Route("/{path:path}", self._handle, methods=["GET", "HEAD", "POST"])]
         )
@@ -145,6 +164,12 @@ class Gateway:
         )
 
     async def _create_session(self, subject: str, group: str, profile: str) -> str:
+        now = self._clock()
+        while self._new_sessions and now - self._new_sessions[0] > 60:
+            self._new_sessions.popleft()
+        if len(self._new_sessions) >= self.settings.max_new_sessions_per_minute:
+            raise _TooBusyError
+        self._new_sessions.append(now)
         session_id = secrets.token_urlsafe(24)
         record = json.dumps({"sub": subject, "grp": group, "prf": profile})
         await self.store.put(f"sess:{session_id}", record, self.settings.session_ttl)
@@ -181,10 +206,69 @@ class Gateway:
         origin = request.headers.get("origin")
         return origin is None or origin == self.settings.apex_origin
 
+    def _isolation_key(self, session_id: str) -> str:
+        """What Tor is given to keep this session on its own circuits.
+
+        It is derived from the session identifier with a secret, so the identifier itself, which
+        is a bearer credential, never leaves the gateway. The SOCKS login is sent unencrypted to
+        wherever Tor runs, and Tor may log it.
+        """
+        digest = hmac.new(self._isolation_secret, session_id.encode("ascii"), hashlib.sha256)
+        return base64.urlsafe_b64encode(digest.digest()).decode("ascii").rstrip("=")[:32]
+
+    def _take_fetch_slot(self, session_id: str) -> bool:
+        """Limit how many onion fetches run at once, overall and for one session."""
+        settings = self.settings
+        if self._active_fetches >= settings.max_concurrent_fetches:
+            return False
+        if self._active_by_session.get(session_id, 0) >= settings.max_fetches_per_session:
+            return False
+        self._active_fetches += 1
+        self._active_by_session[session_id] = self._active_by_session.get(session_id, 0) + 1
+        return True
+
+    def _release_fetch_slot(self, session_id: str) -> None:
+        self._active_fetches -= 1
+        remaining = self._active_by_session.get(session_id, 1) - 1
+        if remaining > 0:
+            self._active_by_session[session_id] = remaining
+        else:
+            self._active_by_session.pop(session_id, None)
+
+    @staticmethod
+    def _request_context(request: Request) -> RequestContext:
+        """How the browser described this request, for cookie rules and the Origin header.
+
+        A browser says in ``Sec-Fetch-Site`` whether a request came from the same origin. Anything
+        else, including a browser that says nothing, is treated as coming from another site, which
+        is the cautious reading.
+        """
+        site = request.headers.get("sec-fetch-site")
+        navigation = (
+            request.headers.get("sec-fetch-mode") == "navigate"
+            and request.headers.get("sec-fetch-user") == "?1"
+            and request.method in ("GET", "HEAD")
+        )
+        return RequestContext(same_origin=site in ("same-origin", "none"), navigation=navigation)
+
+    def _upstream_referer(
+        self, request: Request, label: str, origin: OnionOrigin, context: RequestContext
+    ) -> str | None:
+        """The onion-side address of the page that made this request, if it was on this origin."""
+        referer = request.headers.get("referer")
+        if not referer or not context.same_origin:
+            return None
+        parts = urlsplit(referer)
+        if self.settings.hosts.label_from_host(parts.netloc) != label:
+            return None
+        return f"{origin.key}{parts.path}" + (f"?{parts.query}" if parts.query else "")
+
     # --- entry point -----------------------------------------------------------------------
 
     async def _handle(self, request: Request) -> Response:
         try:
+            if len(request.headers.getlist("host")) > 1:
+                return self._error("bad_request")  # two Host headers: some servers read the other
             host = request.headers.get("host", "")
             hosts = self.settings.hosts
             if hosts.is_apex(host):
@@ -240,6 +324,7 @@ class Gateway:
             and target.startswith(("http://", "https://"))
             and not any(ord(c) <= 0x20 or ord(c) == 0x7F for c in target)
             and "@" not in target.split("/", 3)[2 if target.count("/") >= 2 else 0]
+            and bool(urlsplit(target).hostname)
         )
         if not usable:
             return self._error("bad_request", apex=True)
@@ -266,11 +351,14 @@ class Gateway:
         if parsed is None:
             body = pages.landing_page(notice="That is not a valid version 3 onion address.")
             return self._apex(body, 400, form=True)
-        session_id = existing or await self._create_session(
-            "local", "local", self.settings.profile.name
-        )
         try:
-            label = await self.labels.label_for(session_id, parsed.origin)
+            session_id = existing or await self._create_session(
+                "local", "local", self.settings.profile.name
+            )
+        except _TooBusyError:
+            return self._error("busy", apex=True)
+        try:
+            label = await self.labels.label_for(session_id, parsed.origin, reserved=True)
         except LabelError:
             return self._error("session_limit", apex=True)
         headers = apex_headers(self.settings.header_policy)
@@ -288,13 +376,16 @@ class Gateway:
         except TicketError as exc:
             _log.info("ticket refused: %s", exc.reason)
             return self._error("forbidden", apex=True)
-        session_id = await self._create_session(claims.subject, claims.group, claims.profile)
+        try:
+            session_id = await self._create_session(claims.subject, claims.group, claims.profile)
+        except _TooBusyError:
+            return self._error("busy", apex=True)
         location = f"{self.settings.apex_origin}/"
         if claims.onion is not None:
             origin = OnionOrigin("http", OnionHost(claims.onion), 80)
             try:
                 location = self._viewer_url(
-                    await self.labels.label_for(session_id, origin), "/", ""
+                    await self.labels.label_for(session_id, origin, reserved=True), "/", ""
                 )
             except LabelError:
                 return self._error("session_limit", apex=True)
@@ -382,15 +473,20 @@ class Gateway:
             if read is None:
                 return self._error("payload_too_large")
             body = read
-        cookie = await self.jar.header_for(session_id, origin, request_target)
+        context = self._request_context(request)
+        cookie = await self.jar.header_for(session_id, origin, request_target, context)
         destination = request.headers.get("sec-fetch-dest", "")
+        content_type = request.headers.get("content-type") if method == "POST" else None
         try:
+            body, content_type = normalise_multipart(body, content_type)
             headers = upstream_request_headers(
                 origin,
                 method=method,
                 cookie=cookie,
-                content_type=request.headers.get("content-type") if method == "POST" else None,
+                referer=self._upstream_referer(request, label, origin, context),
+                content_type=content_type,
                 accept=_ACCEPT_BY_DESTINATION.get(destination, ACCEPT_HTML),
+                same_origin=context.same_origin,
             )
         except ValueError:
             return self._error("unsupported_media")
@@ -399,9 +495,11 @@ class Gateway:
             method=method,
             target=request_target,
             headers=headers,
-            isolation_key=session_id,
+            isolation_key=self._isolation_key(session_id),
             body=body,
         )
+        if not self._take_fetch_slot(session_id):
+            return self._error("busy")
         try:
             response = await self.fetcher.fetch(
                 upstream, max_body_bytes=settings.profile.max_asset_bytes
@@ -409,6 +507,8 @@ class Gateway:
         except UpstreamError as exc:
             _log.info("fetch failed: %s", exc.kind)
             return self._error(exc.kind if exc.kind in pages.ERRORS else "protocol_error")
+        finally:
+            self._release_fetch_slot(session_id)
         await self.jar.store_from_response(
             session_id, origin, request_target, response.header_all("set-cookie")
         )
@@ -430,6 +530,9 @@ class Gateway:
         settings = self.settings
         profile = settings.profile
         status = response.status if 200 <= response.status < 600 else 502
+        if status in (204, 205, 304):
+            # These replies have no body, and a body would break the connection.
+            return Response(status_code=status, headers=document_headers(settings.header_policy))
         location = response.header("location")
         if response.status in _REDIRECT_STATUSES and location is not None:
             return await self._redirect(session_id, page_url, response.status, location)
@@ -460,11 +563,19 @@ class Gateway:
         self, session_id: str, mapper: PlaceholderMapper
     ) -> dict[OnionOrigin, str]:
         labels: dict[OnionOrigin, str] = {}
+        new_allowed = self.settings.max_labels_per_page
         for origin in mapper.origins():
+            known = await self.labels.peek(session_id, origin)
+            if known is not None:
+                labels[origin] = known
+                continue
+            if new_allowed <= 0:
+                continue  # that link is turned off, see PlaceholderMapper.substitute
+            new_allowed -= 1
             try:
                 labels[origin] = await self.labels.label_for(session_id, origin)
             except LabelError:
-                continue  # that link is turned off, see PlaceholderMapper.substitute
+                continue
         return labels
 
     async def _in_thread(self, function: Callable[[], Any]) -> Any:

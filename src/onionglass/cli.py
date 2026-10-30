@@ -45,6 +45,7 @@ def build_gateway(  # noqa: PLR0913
     held_file: Path | None = None,
     report_file: Path | None = None,
     hold_after: int | None = None,
+    metrics_token_file: Path | None = None,
 ) -> Gateway:
     """A personal-mode gateway: reachable only from this machine, no sign-in needed.
 
@@ -59,6 +60,12 @@ def build_gateway(  # noqa: PLR0913
         )
     if name_list is not None and held_file is None:
         raise PolicyConfigError("--name-list needs --held-file, or it could only refuse once")
+    metrics_token = None
+    if metrics_token_file is not None:
+        try:
+            metrics_token = metrics_token_file.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise PolicyConfigError(f"cannot read {metrics_token_file}: {exc.strerror}") from exc
     held = HeldList(held_file) if held_file is not None else None
     reports = None
     if report_file is not None:
@@ -68,21 +75,25 @@ def build_gateway(  # noqa: PLR0913
             raise PolicyConfigError(str(exc)) from exc
     elif hold_after is not None:
         raise PolicyConfigError("--hold-after needs --report-file")
-    settings = Settings(
-        base_domain="localhost",
-        scheme="http",
-        port=port,
-        open_mode=True,
-        profile=Profile(name="personal", allow_images=allow_images),
-        policy=policy,
-        kill=KillSwitch(kill_file) if kill_file is not None else None,
-        audit=JsonLinesAudit(audit_log, address_form=audit_address)
-        if audit_log is not None
-        else None,
-        held=held,
-        reports=reports,
-        name_gate=load_name_gate(name_list) if name_list is not None else None,
-    )
+    try:
+        settings = Settings(
+            base_domain="localhost",
+            scheme="http",
+            port=port,
+            open_mode=True,
+            profile=Profile(name="personal", allow_images=allow_images),
+            policy=policy,
+            kill=KillSwitch(kill_file) if kill_file is not None else None,
+            audit=JsonLinesAudit(audit_log, address_form=audit_address)
+            if audit_log is not None
+            else None,
+            held=held,
+            reports=reports,
+            metrics_token=metrics_token,
+            name_gate=load_name_gate(name_list) if name_list is not None else None,
+        )
+    except ValueError as exc:
+        raise PolicyConfigError(str(exc)) from exc
     fetcher = TorFetcher(TorConfig(socks_host=tor_host, socks_ports=tuple(tor_ports)))
     return Gateway(settings, fetcher=fetcher)
 
@@ -147,6 +158,11 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         help="hold a site once this many different visitors have reported it (needs --held-file)",
     )
+    parser.add_argument(
+        "--metrics-token-file",
+        type=Path,
+        help="turn on /_og/metrics for a scraper that sends the token in this file",
+    )
     parser.add_argument("--audit-log", type=Path, help="append an audit line for every request")
     parser.add_argument(
         "--audit-address",
@@ -187,6 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             held_file=args.held_file,
             report_file=args.report_file,
             hold_after=args.hold_after,
+            metrics_token_file=args.metrics_token_file,
         )
     except PolicyConfigError as exc:
         print(f"onionglass: {exc}", file=sys.stderr)

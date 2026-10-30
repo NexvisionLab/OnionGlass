@@ -110,6 +110,24 @@ With `--report-file FILE`, the viewer shows a "Report this site" button next to 
 - With `--hold-after N` (and `--held-file`), a site that N different visitors have reported is held, so nobody can open it until a person has looked and removed its line from the held file.
 - If the file cannot be written, the visitor is told the report was not recorded.
 
+### Metrics
+
+With `--metrics-token-file FILE`, the gateway serves Prometheus metrics at `/_og/metrics` on its main address, to a scraper that sends the token from that file as `Authorization: Bearer <token>`. The token must be 16 or more printable characters with no spaces. Without the option the endpoint does not exist. Keep the token in a file and not on the command line.
+
+```
+scrape_configs:
+  - job_name: onionglass
+    metrics_path: /_og/metrics
+    authorization:
+      credentials_file: /etc/prometheus/onionglass.token
+    static_configs:
+      - targets: ["gateway.example:443"]
+```
+
+What you get: requests allowed and refused, refusals by reason, replies by status class, Tor fetch failures by kind, how long fetches take, sessions created, reports, pages that could not be rewritten, fetches in progress against the most allowed, and whether a kill file is stopping the whole gateway. Useful alerts are a rising rate of fetch failures, the kill gauge going to 1, fetches in progress close to the limit, and any sign of `policy-unavailable`, `audit-unavailable` or `quota-unavailable` refusals, which mean a dependency is down.
+
+Every label has a small fixed set of values. No metric is labelled with an onion address, an account, a session, a path or a rule name you wrote, so the endpoint cannot say what anyone opened. Certificate expiry is not reported here. Watch it with whatever monitors your certificates.
+
 ### The kill file
 
 Create the file to stop serving, delete it or empty it to start again. The gateway looks at it about once a second and does not need a restart. One scope per line:

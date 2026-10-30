@@ -103,6 +103,7 @@ class Settings:
     held: HeldList | None = None
     reports: ReportQueue | None = None
     max_reports_per_session: int = 10
+    metrics_token: str | None = None
     name_gate: NameGate | None = None
     hook_timeout: float = 2.0
 
@@ -113,6 +114,13 @@ class Settings:
         return self.profiles.get(name)
 
     def __post_init__(self) -> None:
+        if self.metrics_token is not None and (
+            len(self.metrics_token) < 16
+            or not self.metrics_token.isascii()
+            or not self.metrics_token.isprintable()
+            or " " in self.metrics_token
+        ):
+            raise ValueError("the metrics token must be 16 or more printable characters, no spaces")
         if self.name_gate is not None and self.held is None:
             raise ValueError("a name gate needs a held list, or it could only refuse once")
         if self.quota is None and any(

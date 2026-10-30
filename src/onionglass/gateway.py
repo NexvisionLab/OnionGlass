@@ -33,6 +33,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
+import onionglass
 from onionglass import pages
 from onionglass.audit import AuditEvent
 from onionglass.cookies import CookieJar, RequestContext
@@ -50,6 +51,7 @@ from onionglass.headers import (
 )
 from onionglass.labels import LabelBook, LabelError, is_valid_label, is_valid_session_id
 from onionglass.mapper import PlaceholderMapper
+from onionglass.metrics import Metrics, reason_for, token_matches
 from onionglass.onion import InvalidOnionError, OnionHost, OnionOrigin, OnionUrl, parse_onion_url
 from onionglass.policy import Decision, PolicyRequest
 from onionglass.reports import CATEGORIES, ReportError
@@ -161,6 +163,7 @@ class Gateway:
         self._active_by_session: dict[str, int] = {}
         self._new_sessions: deque[float] = deque()
         self._requests: dict[str, deque[float]] = {}
+        self.metrics = Metrics(pages.ERRORS)
         self.app = Starlette(
             routes=[Route("/{path:path}", self._handle, methods=["GET", "HEAD", "POST"])]
         )
@@ -205,6 +208,7 @@ class Gateway:
             raise _TooBusyError
         self._new_sessions.append(now)
         session_id = secrets.token_urlsafe(24)
+        self.metrics.inc("sessions_created_total")
         record = json.dumps({"sub": subject, "grp": group, "prf": profile})
         await self.store.put(f"sess:{session_id}", record, self.settings.session_ttl)
         return session_id
@@ -223,6 +227,20 @@ class Gateway:
         record = await self.store.get(f"sess:{session_id}") if session_id else None
         return self._who(record)
 
+    def _count(self, kind: str, action: str, rule: str, status: int | None) -> None:
+        """Count an event. Only fixed label values are used, never an address or an account."""
+        metrics = self.metrics
+        if kind in ("allowed", "refused"):
+            metrics.inc("requests_total", action=action, outcome=kind)
+            if kind == "refused":
+                metrics.inc("refusals_total", reason=reason_for(rule))
+        elif kind == "response" and status is not None:
+            metrics.inc("upstream_responses_total", **{"class": f"{status // 100}xx"})
+        elif kind == "failed":
+            metrics.inc("upstream_errors_total", kind=rule)
+        elif kind == "report":
+            metrics.inc("reports_total", category=rule)
+
     async def _record(
         self,
         kind: str,
@@ -235,6 +253,7 @@ class Gateway:
         status: int | None = None,
     ) -> bool:
         """Write an audit event. False means the sink is configured and failed."""
+        self._count(kind, action, rule, status)
         sink = self.settings.audit
         if sink is None:
             return True
@@ -338,6 +357,7 @@ class Gateway:
             await self._record("refused", who, origin, action, rule="quota", path=path)
             return _Verdict(exhausted)
         if not await self._record("allowed", who, origin, action, rule=verdict.rule, path=path):
+            self.metrics.inc("refusals_total", reason="audit-unavailable")
             return _Verdict("audit_unavailable")
         if not await self._charge(who, profile, cost):
             await self._record("refused", who, origin, action, rule="quota-unavailable", path=path)
@@ -504,6 +524,8 @@ class Gateway:
             return await self._viewer(request)
         if path == "/_og/current" and method == "GET":
             return await self._current_page(request)
+        if path == "/_og/metrics" and method == "GET" and self.settings.metrics_token is not None:
+            return self._metrics(request)
         if path == "/_og/report" and method == "POST" and self.settings.reports is not None:
             return await self._report(request)
         if path == "/_og/viewer.js" and method == "GET":
@@ -590,6 +612,7 @@ class Gateway:
             return self._error("forbidden", apex=True)
         ticket_profile = self.settings.profile_named(claims.profile)
         if ticket_profile is None:
+            self.metrics.inc("refusals_total", reason="unknown-profile")
             _log.info("ticket names a profile this gateway does not have")
             return self._error("unknown_profile", apex=True)
         ticket_origin = (
@@ -661,6 +684,36 @@ class Gateway:
         record = json.dumps({"url": page_url.url, "frame": frame_url, "title": title})
         await self.store.put(f"cur:{session_id}", record, self.settings.session_ttl)
 
+    def _metrics(self, request: Request) -> Response:
+        """The metrics, for a scraper that knows the token. Off unless a token is set."""
+        settings = self.settings
+        header = request.headers.get("authorization", "")
+        supplied = header[7:] if header[:7].lower() == "bearer " else None
+        if settings.metrics_token is None or not token_matches(supplied, settings.metrics_token):
+            headers = apex_headers(settings.header_policy)
+            headers["WWW-Authenticate"] = "Bearer"
+            return Response(b"", 401, headers)
+        kill_all = 0.0
+        if settings.kill is not None:
+            kill_all = (
+                1.0
+                if settings.kill.engaged(profile="", address="") in ("all", "unreadable")
+                else 0.0
+            )
+        gauges = {
+            "active_fetches": ("Fetches in progress now.", float(self._active_fetches)),
+            "fetch_capacity": (
+                "The most fetches allowed at once.",
+                float(settings.max_concurrent_fetches),
+            ),
+            "kill_all": ("1 while a kill file stops the whole gateway.", kill_all),
+            "up": ("1 while the gateway is running.", 1.0),
+        }
+        headers = apex_headers(settings.header_policy)
+        headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8"
+        body = self.metrics.render(gauges, onionglass.__version__)
+        return Response(body.encode("utf-8"), 200, headers)
+
     def _json(self, status: int, message: str) -> Response:
         headers = apex_headers(self.settings.header_policy)
         headers["Content-Type"] = "application/json"
@@ -727,6 +780,7 @@ class Gateway:
             await self._record("refused", who, origin, "fetch", rule="profile:post", path=target)
             return self._error("not_permitted")
         if not self._take_rate_slot(session_id, profile):
+            self.metrics.inc("refusals_total", reason="rate-limit")
             return self._error("slow_down")
         admitted = await self._admit(who, profile, origin, "fetch", path=target)
         if isinstance(admitted, Response):
@@ -766,6 +820,7 @@ class Gateway:
         who = self._who(session_record)
         profile = settings.profile_named(who.profile)
         if profile is None:
+            self.metrics.inc("refusals_total", reason="unknown-profile")
             return self._error("unknown_profile")
         if settings.require_cookie and request.cookies.get(settings.cookie_name) != session_id:
             return self._error("forbidden")
@@ -833,6 +888,7 @@ class Gateway:
             return self._error(exc.kind if exc.kind in pages.ERRORS else "protocol_error")
         finally:
             self._release_fetch_slot(session_id)
+        self.metrics.observe_upstream(response.elapsed)
         # The outcome is recorded before anything of the reply is used. If it cannot be recorded
         # the reply is dropped, cookies included.
         recorded = await self._record(
@@ -942,6 +998,7 @@ class Gateway:
                 profile,
             )
         except (RewriteError, TimeoutError):
+            self.metrics.inc("rewrite_failures_total")
             return self._error("rewrite_failed")
         if await self._name_gate_hit(session_id, page_url, result.title, result.headings):
             return self._error("denied")

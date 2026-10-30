@@ -95,7 +95,7 @@ settings = Settings(
 
 ## Ticket
 
-A ticket is how your sign-in service tells the gateway who is arriving. It is signed, short-lived and single-use. The gateway holds only public keys, so a stolen gateway cannot sign anyone in. Visitors arrive by opening `https://<gateway>/enter?t=<ticket>`, which signs them in and sends them on, to the entry page or straight to one onion site if the ticket names one.
+A ticket is how your sign-in service tells the gateway who is arriving. It is signed, short-lived and single-use. The gateway holds only public keys, so a stolen gateway cannot sign anyone in. Visitors arrive by opening `https://<gateway>/enter?t=<ticket>`. The gateway shows a page with a Continue button, and pressing it signs them in and sends them on, to the entry page or straight to one onion site if the ticket names one. Looking at the page does not use the ticket up, only pressing the button does, and the button works only from the gateway's own page. This stops a page elsewhere from sending a visitor's browser to a sign-in link and signing them in as someone else. Your sign-in service cannot press the button for the visitor: it should send them to the link and let them continue. An operator who must have no extra click can set `confirm_sign_in = false` under `[tickets]`, and then the link signs in at once and that protection is gone.
 
 ### Format
 

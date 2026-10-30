@@ -191,7 +191,9 @@ def test_the_limits_in_the_document_are_the_limits_that_work() -> None:
 def team_gateway() -> TestClient:
     ring = KeyRing()
     ring.add("k1", KEY.public_key())
-    settings = Settings(base_domain="gw.example", keys=ring, audience=AUDIENCE)
+    settings = Settings(
+        base_domain="gw.example", keys=ring, audience=AUDIENCE, confirm_sign_in=False
+    )
     gateway = Gateway(settings, fetcher=FakeFetcher())
     return TestClient(gateway.app, base_url="https://gw.example", follow_redirects=False)
 

@@ -78,6 +78,7 @@ def _team_gateway(tmp_path: Path, hold_after: int) -> tuple[Gateway, HeldList]:
     settings = Settings(
         base_domain="gw.example",
         keys=keys,
+        confirm_sign_in=False,
         profile=Profile(name="personal"),
         name_gate=NameGate(["grape"]),
         name_gate_hold_after=hold_after,

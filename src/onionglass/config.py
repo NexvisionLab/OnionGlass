@@ -554,7 +554,7 @@ def parse_config(data: Mapping[str, Any], base: Path) -> TeamConfig:
     reader = _Reader(data, base)
     domain, scheme, listen, port, public_port = _server(reader)
     tor = _tor(reader)
-    tickets = reader.table("tickets", {"audience", "keys"})
+    tickets = reader.table("tickets", {"audience", "keys", "confirm_sign_in"})
     if "keys" not in tickets:
         raise ConfigError("[tickets].keys is required: the public keys that sign visitors in")
     limits = _limits(reader)
@@ -567,6 +567,7 @@ def parse_config(data: Mapping[str, Any], base: Path) -> TeamConfig:
             scheme=scheme,
             port=public_port,
             audience=_get_or(tickets, "audience", str, "[tickets]", "onionglass"),
+            confirm_sign_in=_get_or(tickets, "confirm_sign_in", bool, "[tickets]", True),
             profile=default_profile,
             profiles=profiles,
             keys=_key_ring(reader, tickets["keys"], "[tickets].keys"),

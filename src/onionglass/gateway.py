@@ -598,7 +598,7 @@ class Gateway:
             return self._apex(pages.abuse_page(self.settings.abuse_contact))
         if path == "/open" and method == "POST":
             return await self._open(request)
-        if path == "/enter" and method == "GET":
+        if path == "/enter" and method in ("GET", "POST"):
             return await self._enter(request)
         if path == "/_og/external" and method in ("GET", "HEAD"):
             return self._external(request)
@@ -734,10 +734,41 @@ class Gateway:
         return response
 
     async def _enter(self, request: Request) -> Response:
+        """A sign-in link. It asks the visitor to confirm, unless the operator turned that off.
+
+        Looking at the confirmation page does not use the link up. Only the confirmation does, and
+        only if it came from this gateway's own page, so a page elsewhere cannot send it.
+        """
         if self.verifier is None:
             return self._error("not_found", apex=True)
+        if request.method == "POST":
+            if not self._same_origin(request):
+                return self._error("forbidden", apex=True)
+            raw = await self._read_body(request, _FORM_LIMIT)
+            if raw is None:
+                return self._error("payload_too_large", apex=True)
+            fields = parse_qs(raw.decode("ascii", errors="ignore"), max_num_fields=10)
+            return await self._complete_entry((fields.get("t") or [""])[0])
+        token = request.query_params.get("t", "")
+        if not self.settings.confirm_sign_in:
+            return await self._complete_entry(token)
         try:
-            claims = await self.verifier.redeem(request.query_params.get("t", ""), self.store)
+            claims = self.verifier.verify(token)
+        except TicketError as exc:
+            _log.info("ticket refused: %s", exc.reason)
+            return self._error("forbidden", apex=True)
+        if self.settings.profile_named(claims.profile) is None:
+            self.metrics.inc("refusals_total", reason="unknown-profile")
+            return self._error("unknown_profile", apex=True)
+        return self._apex(pages.confirm_sign_in_page(token), form=True)
+
+    async def _complete_entry(self, token: str) -> Response:
+        """Redeem a ticket and sign the visitor in."""
+        verifier = self.verifier
+        if verifier is None:
+            return self._error("not_found", apex=True)
+        try:
+            claims = await verifier.redeem(token, self.store)
         except TicketError as exc:
             _log.info("ticket refused: %s", exc.reason)
             return self._error("forbidden", apex=True)

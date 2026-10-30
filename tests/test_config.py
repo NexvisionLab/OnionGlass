@@ -106,6 +106,16 @@ def layout(tmp_path: Path) -> Layout:
     return Layout(tmp_path)
 
 
+def enter(client: TestClient, token: str) -> Any:
+    """Sign in through a link the way a visitor does: look at the page, then press the button."""
+    page = client.get("/enter", params={"t": token})
+    assert page.status_code == 200 and "set-cookie" not in page.headers
+    origin = str(client.base_url).rstrip("/")
+    return client.post(
+        "/enter", data={"t": token}, headers={"origin": origin, "sec-fetch-site": "same-origin"}
+    )
+
+
 def loads(text: str, base: Path) -> Any:
     return parse_config(tomllib.loads(text), base)
 
@@ -162,7 +172,7 @@ def test_the_gateway_built_from_the_example_signs_people_in_and_enforces_it(
     ghost = layout.issuer().issue(subject="a", group="g", profile="ghost")
     assert client.get("/enter", params={"t": ghost}).status_code == 403  # no such profile
     ticket = layout.issuer().issue(subject="alice", group="team", profile="restricted")
-    assert client.get("/enter", params={"t": ticket}).status_code == 303
+    assert enter(client, ticket).status_code == 303
     same = {"origin": "https://gateway.example.org"}
     blocked = client.post("/open", data={"address": f"{TOR_PROJECT}.onion"}, headers=same)
     assert blocked.status_code == 403
@@ -607,7 +617,7 @@ def test_a_ticket_made_by_the_command_signs_a_visitor_in(
     assert link.startswith("https://gateway.example.org/enter?t=og1.")
     gateway = Gateway(load_config(layout.config).settings, fetcher=FakeFetcher())
     client = TestClient(gateway.app, base_url="https://gateway.example.org", follow_redirects=False)
-    response = client.get(link.removeprefix("https://gateway.example.org"))
+    response = enter(client, link.split("t=", 1)[1])
     assert response.status_code == 303 and "/view?l=" in response.headers["location"]
     assert DUCKDUCKGO not in response.headers["location"]
 

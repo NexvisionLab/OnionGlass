@@ -149,6 +149,7 @@ class Settings:
     name_gate_hold_after: int = 2
     abuse_contact: str | None = None  # shown on the abuse page
     known_sites: KnownSites | None = None  # sites whose look-alikes get a warning
+    confirm_sign_in: bool = True  # a sign-in link asks the visitor to confirm before it signs in
 
     def profile_named(self, name: str) -> Profile | None:
         """The profile a session was given, or None if this gateway does not have it."""

@@ -56,6 +56,7 @@ class Team:
         self.settings = Settings(
             base_domain="gw.example",
             keys=keys,
+            confirm_sign_in=False,
             profiles={
                 "restricted": Profile.restricted(),
                 "analyst": ANALYST,
@@ -149,7 +150,7 @@ def test_a_session_whose_profile_disappears_is_refused_not_given_the_default() -
     assert visitor.open() == 303 and visitor.get().status_code == 200
     # The same sessions, served by a gateway that no longer has that profile.
     later = Gateway(
-        Settings(base_domain="gw.example", keys=team.settings.keys),
+        Settings(base_domain="gw.example", keys=team.settings.keys, confirm_sign_in=False),
         fetcher=team.fetcher,
         store=store,
     )

@@ -249,6 +249,21 @@ def landing_page(
     return _page("onionglass", body)
 
 
+def confirm_sign_in_page(token: str) -> bytes:
+    """What a sign-in link shows. The visitor must press the button, so a page that sent them
+    here cannot sign them in without their knowing. ``token`` is the link's own ticket."""
+    body = (
+        "<h1>Sign in</h1>"
+        "<p>You followed a sign-in link. If you were expecting one, continue. If a page you "
+        "were reading sent you here, do not.</p>"
+        '<form method="post" action="/enter">'
+        f'<input type="hidden" name="t" value="{html.escape(token)}">'
+        '<button type="submit">Continue</button></form>'
+        '<p><a href="/">Cancel</a></p>'
+    )
+    return _page("Sign in", body)
+
+
 def lookalike_page(typed: str, shown: str, real_name: str, real_address: str) -> bytes:
     """The warning before an address that starts like a well-known one.
 

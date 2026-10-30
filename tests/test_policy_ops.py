@@ -314,7 +314,10 @@ def test_a_ticket_for_a_blocked_onion_is_refused_too() -> None:
     keys.add("k1", key.public_key())
     issuer = TicketIssuer(key, "k1", "onionglass")
     settings = Settings(
-        base_domain="gw.example", keys=keys, policy=StaticPolicy(blocked=[TOR_PROJECT])
+        base_domain="gw.example",
+        keys=keys,
+        policy=StaticPolicy(blocked=[TOR_PROJECT]),
+        confirm_sign_in=False,
     )
     gateway = Gateway(settings, fetcher=FakeFetcher())
     client = TestClient(gateway.app, base_url="https://gw.example", follow_redirects=False)

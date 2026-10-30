@@ -20,6 +20,7 @@ ports = [9050, 9052]             # one SOCKS port for each Tor process
 
 [tickets]
 audience = "onionglass"
+# confirm_sign_in = true   # a sign-in link shows a Continue button first; only turn off if you must
 # The public keys that may sign visitors in. To rotate: add the new key, switch the signer,
 # then remove the old key. Make a pair with: onionglass keys generate --id signin-2026-10
 keys = [

@@ -743,12 +743,14 @@ def test_a_label_stops_working_when_its_session_ends() -> None:
 class Deployed:
     """A team-mode gateway on a real domain, where tickets sign visitors in."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, confirm_sign_in: bool = False) -> None:
         self.key = generate_key()
         keys = KeyRing()
         keys.add("k1", self.key.public_key())
         self.issuer = TicketIssuer(self.key, "k1", "onionglass")
-        self.settings = Settings(base_domain="gw.example", keys=keys)
+        self.settings = Settings(
+            base_domain="gw.example", keys=keys, confirm_sign_in=confirm_sign_in
+        )
         self.fetcher = FakeFetcher()
         self.gateway = Gateway(self.settings, fetcher=self.fetcher)
         self.client = TestClient(

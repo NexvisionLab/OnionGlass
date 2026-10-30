@@ -81,6 +81,9 @@ file = "state/held.txt"          # sites waiting for review; delete a line to re
 file = "lists/names.txt"         # phrases that hold a site when they appear in a title or heading
 hold_after = 2                   # different accounts that must meet the hit before a site is held
 
+[abuse]
+contact = "abuse@example.org"   # shown on /abuse; an email address or an https link
+
 [reports]
 file = "state/reports.log"
 hold_after = 3                   # hold a site once this many different visitors report it

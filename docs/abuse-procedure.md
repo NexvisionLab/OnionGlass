@@ -32,7 +32,7 @@ Reviewers can be harmed by what they see. Rotate reviewers, limit exposure, give
 
 ## Things to decide before launch
 
-- Who the abuse contact is and how they are reached.
+- Who the abuse contact is and how they are reached. Put it in the `[abuse]` section of the configuration. The gateway then serves a public page at `/abuse`, which needs no sign-in, names the contact, says to send the address and not the material, and lists the reasons the report button offers. The entry page links to it. `check-config` warns when no contact is set.
 - Which authority or hotline you report to, and who is allowed to make the report.
 - How long you keep the minimal records in step 4.
 - Who can unblock an onion, and on what evidence.

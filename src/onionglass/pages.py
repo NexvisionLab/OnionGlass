@@ -225,7 +225,9 @@ def error_page(kind: str) -> tuple[int, bytes]:
     return status, _page(title, body)
 
 
-def landing_page(*, notice: str | None = None, can_open: bool = True) -> bytes:
+def landing_page(
+    *, notice: str | None = None, can_open: bool = True, abuse_link: bool = False
+) -> bytes:
     problem = f'<p class="error">{html.escape(notice)}</p>' if notice else ""
     if can_open:
         form = (
@@ -242,7 +244,38 @@ def landing_page(*, notice: str | None = None, can_open: bool = True) -> bytes:
         "<p>Pages are shown without scripts. Images are not loaded unless the operator allows "
         "them.</p>"
     )
+    if abuse_link:
+        body += '<p><a href="/abuse">Report a site or send a complaint</a></p>'
     return _page("onionglass", body)
+
+
+def abuse_page(contact: str | None) -> bytes:
+    """How to report a site or complain, and what the operator does with it."""
+    if contact is None:
+        where = "<p>This operator has not published a contact for reports and complaints.</p>"
+    else:
+        shown = html.escape(contact)
+        link = f"mailto:{contact}" if not contact.startswith("https://") else contact
+        where = f'<p>Send reports and complaints to <a href="{html.escape(link)}">{shown}</a>.</p>'
+    reasons = "".join(f"<li>{html.escape(label)}</li>" for label in REPORT_LABELS.values())
+    body = (
+        "<h1>Reports and complaints</h1>"
+        f"{where}"
+        "<h2>Send the address, not the material</h2>"
+        "<p>Say which onion address you mean and why. Do not send the material itself, and do "
+        "not attach images, files or screenshots of it. The operator does not need them, and "
+        "passing them on can be a crime in some places.</p>"
+        "<h2>Reporting while you browse</h2>"
+        "<p>When you are looking at a site, the report button above it sends the address with "
+        "one reason from this list. Nothing from the page is sent.</p>"
+        f"<ul>{reasons}</ul>"
+        "<h2>What happens next</h2>"
+        "<p>A site that has been reported, or whose title names something the operator forbids, "
+        "can be held, which stops everyone from opening it until a person has looked. The "
+        "operator reports illegal material to the authority that handles it, and keeps no "
+        "copy of it.</p>"
+    )
+    return _page("Reports and complaints", body)
 
 
 VIEWER_SCRIPT = """(function () {

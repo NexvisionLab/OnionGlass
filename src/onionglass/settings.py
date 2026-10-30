@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
@@ -18,6 +19,21 @@ from onionglass.reports import ReportQueue
 from onionglass.tickets import KeyRing
 
 MAX_PROFILE_BYTES = 1_000_000_000
+MAX_CONTACT = 200
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+
+
+def valid_contact(contact: str) -> bool:
+    """True for a plain email address or an https link, in printable ASCII with no spaces."""
+    if not 3 <= len(contact) <= MAX_CONTACT:
+        return False
+    if not all(0x21 <= ord(char) <= 0x7E for char in contact):
+        return False
+    if contact.startswith("https://"):
+        return len(contact) > len("https://x.y") and "@" not in contact.split("/")[2]
+    return _EMAIL.fullmatch(contact) is not None
+
+
 MAX_REWRITE_TIMEOUT = 300.0
 _COOKIE_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
@@ -129,6 +145,7 @@ class Settings:
     name_gate: NameGate | None = None
     hook_timeout: float = 2.0
     name_gate_hold_after: int = 2
+    abuse_contact: str | None = None  # shown on the abuse page
 
     def profile_named(self, name: str) -> Profile | None:
         """The profile a session was given, or None if this gateway does not have it."""
@@ -164,6 +181,8 @@ class Settings:
 
     def __post_init__(self) -> None:
         self._check_limits()
+        if self.abuse_contact is not None and not valid_contact(self.abuse_contact):
+            raise ValueError("the abuse contact must be an email address or an https link")
         if self.metrics_token is not None and (
             len(self.metrics_token) < 16
             or not self.metrics_token.isascii()

@@ -89,6 +89,7 @@ These are the properties tests must prove.
 | The outside audit service learns more than the operator chose to record | The audit hook receives the site in the same form as the local log: `full`, `origin`, `hash` or `none`. The default is the origin without the path | P10 |
 | Requests that arrive together overspend an allowance, or a link to a new site is a free open | The allowance is checked and taken in one step by the meter, and the first request to a site in a session is an open however it was reached | P7 |
 | Something that gets hold of Tor's port uses it to leave through an exit | The SOCKS port is set to `OnionTrafficOnly`, checked against a real Tor, and the bundle's network has no other way out | P2, P5 |
+| Nobody knows where to report a site, or a complaint has nowhere to go | A public abuse page, reachable without signing in, that names the operator's contact and tells people to send the address and never the material. The contact must be an email address or an https link, and the check-config command warns when it is missing | P6 |
 | Abuse to reach illegal material | Blocklists, name checks on address and page title, text-only for unrated sites, abuse procedure, images never fetched by default | P6 |
 | Tampered evidence | WARC capture, hashes, signed manifest, optional trusted timestamp, encryption at rest | none yet |
 | Malicious dependency or contributor | Pinned and hashed dependencies, dependency review, signed releases, code ownership on sensitive modules, CodeQL and fuzzing | none yet |

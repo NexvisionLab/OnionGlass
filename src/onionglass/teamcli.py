@@ -160,6 +160,8 @@ def describe(config: TeamConfig) -> list[str]:
         lines.append("warning: no held list, so nothing can be held for review")
     if s.policy is None:
         lines.append("warning: no policy, so any valid onion address can be opened")
+    if s.abuse_contact is None:
+        lines.append("warning: no abuse contact, so the abuse page has nobody to name")
     return lines
 
 

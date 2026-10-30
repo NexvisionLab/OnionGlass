@@ -589,7 +589,12 @@ class Gateway:
         if path == "/" and method in ("GET", "HEAD"):
             session = await self._current_session(request)
             can_open = self.settings.open_mode or session is not None
-            return self._apex(pages.landing_page(can_open=can_open), form=can_open)
+            has_contact = self.settings.abuse_contact is not None
+            return self._apex(
+                pages.landing_page(can_open=can_open, abuse_link=has_contact), form=can_open
+            )
+        if path == "/abuse" and method in ("GET", "HEAD"):
+            return self._apex(pages.abuse_page(self.settings.abuse_contact))
         if path == "/open" and method == "POST":
             return await self._open(request)
         if path == "/enter" and method == "GET":
@@ -608,15 +613,18 @@ class Gateway:
             return self._viewer_script()
         if path == "/_og/blocked":
             return self._apex(pages.blocked_page(), 403)
+        return self._apex_fixed(path) or self._error("not_found", apex=True)
+
+    def _apex_fixed(self, path: str) -> Response | None:
+        """The two answers that never change: the health check and the robots file."""
+        headers = apex_headers(self.settings.header_policy)
         if path == "/_og/health":
-            headers = apex_headers(self.settings.header_policy)
             headers["Content-Type"] = "application/json"
             return Response(b'{"status":"ok"}', 200, headers)
         if path == "/robots.txt":
-            headers = apex_headers(self.settings.header_policy)
             headers["Content-Type"] = "text/plain; charset=utf-8"
             return Response(b"User-agent: *\nDisallow: /\n", 200, headers)
-        return self._error("not_found", apex=True)
+        return None
 
     def _external(self, request: Request) -> Response:
         target = request.query_params.get("u", "")

@@ -42,7 +42,7 @@ from onionglass.upstream import TorConfig
 SECTIONS = frozenset(
     {
         "server", "tor", "tickets", "limits", "profile", "profiles", "policy", "kill", "audit",
-        "held", "names", "reports", "metrics", "quota", "hooks",
+        "held", "names", "reports", "metrics", "quota", "hooks", "abuse",
     }
 )  # fmt: skip
 PROFILE_FIELDS = frozenset(f.name for f in fields(Profile))
@@ -489,6 +489,16 @@ def _services(reader: _Reader, hook_timeout: float) -> dict[str, Any]:
     return parts
 
 
+def _abuse_contact(reader: _Reader) -> str | None:
+    table = reader.table("abuse", {"contact"})
+    if not table:
+        return None
+    contact = _get(table, "contact", str, "[abuse]")
+    if not contact:
+        raise ConfigError("[abuse] needs a contact")
+    return str(contact)
+
+
 def _safety_files(reader: _Reader) -> dict[str, Any]:
     """The kill file, held list, name gate, report queue and metrics token."""
     kill_file = _single_path(reader, "kill")
@@ -499,6 +509,7 @@ def _safety_files(reader: _Reader) -> dict[str, Any]:
         "kill": KillSwitch(kill_file) if kill_file else None,
         "held": held,
         "name_gate": load_name_gate(names_file) if names_file else None,
+        "abuse_contact": _abuse_contact(reader),
         "name_gate_hold_after": _get_or(
             reader.table("names", {"file", "hold_after"}), "hold_after", int, "[names]", 2
         ),

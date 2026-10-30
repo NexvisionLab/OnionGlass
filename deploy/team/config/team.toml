@@ -56,6 +56,10 @@ file = "/var/lib/onionglass/held.txt"
 # [names]
 # file = "lists/names.txt"       # your own phrase list; needs the [held] section above
 
+[abuse]
+# Shown on /abuse. Change this to a mailbox somebody reads, before you open to anyone.
+contact = "abuse@your-domain.example"
+
 [reports]
 file = "/var/lib/onionglass/reports.log"
 hold_after = 3

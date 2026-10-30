@@ -151,6 +151,10 @@ With `--report-file FILE`, the viewer shows a "Report this site" button next to 
 - With `--hold-after N` (and `--held-file`), a site that N different visitors have reported is held, so nobody can open it until a person has looked and removed its line from the held file.
 - If the file cannot be written, the visitor is told the report was not recorded.
 
+### The abuse page
+
+With `[abuse] contact = "..."` in the config file, the gateway serves `/abuse` to anyone, signed in or not. It names the contact (an email address or an https link, nothing else is accepted), tells people to send the address and never the material, lists the reasons the report button offers, and says what happens next. The entry page links to it. Without a contact the page says the operator has not published one, the entry page does not link to it, and `check-config` warns. Write the contact once and read what arrives there: the [abuse procedure](abuse-procedure.md) is what to do with it.
+
 ### Metrics
 
 With `--metrics-token-file FILE`, the gateway serves Prometheus metrics at `/_og/metrics` on its main address, to a scraper that sends the token from that file as `Authorization: Bearer <token>`. The token must be 16 or more printable characters with no spaces. Without the option the endpoint does not exist. Keep the token in a file and not on the command line. The deployment bundle's proxy answers `404` for this path from outside, so scrape the gateway directly, from inside the same network.

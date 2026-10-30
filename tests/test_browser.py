@@ -12,7 +12,7 @@ import re
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +25,7 @@ from playwright.sync_api import Browser, Frame, Page, expect, sync_playwright
 from helpers import TOR_PROJECT
 from onionglass.gateway import Gateway
 from onionglass.settings import Profile, Settings
-from onionglass.upstream import UpstreamRequest, UpstreamResponse
+from onionglass.upstream import Fetcher, UpstreamRequest, UpstreamResponse
 
 pytestmark = pytest.mark.browser
 
@@ -151,7 +151,9 @@ class Running:
 
 
 @contextmanager
-def running_gateway(*, allow_images: bool) -> Iterator[Running]:
+def running_gateway(
+    *, allow_images: bool, site: Callable[[str], Fetcher] | None = None
+) -> Iterator[Running]:
     with leak_detector() as detector:
         port = free_port()
         settings = Settings(
@@ -161,7 +163,8 @@ def running_gateway(*, allow_images: bool) -> Iterator[Running]:
             open_mode=True,
             profile=Profile(allow_images=allow_images),
         )
-        gateway = Gateway(settings, fetcher=HostileOnion(f"http://127.0.0.1:{detector.port}"))
+        leak = f"http://127.0.0.1:{detector.port}"
+        gateway = Gateway(settings, fetcher=(site or HostileOnion)(leak))
         config = uvicorn.Config(
             gateway.app, host="127.0.0.1", port=port, log_level="warning", access_log=False
         )

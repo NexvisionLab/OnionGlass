@@ -100,7 +100,7 @@ Anonymity of the visitor against the operator, circumventing law enforcement or 
 
 | Property | Status | Tests |
 |---|---|---|
-| P1 no script executes | Covered end to end, and checked by hand in a real browser (section 9) | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_rewrite_review.py`, `tests/test_headers.py`, `tests/test_gateway.py` |
+| P1 no script executes | Covered end to end, and checked by hand in a real browser (section 9) | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_rewrite_review.py`, `tests/test_grammar_fuzz.py`, `tests/test_browser_fuzz.py`, `tests/test_headers.py`, `tests/test_gateway.py` |
 | P2 no third-party contact | Covered end to end, and checked by hand in a real browser. Verification of finished CSS is separate from the rewriter | `tests/test_rewrite_urls.py`, `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
 | P3 one onion cannot read another's data | Covered for cookies (including `SameSite` and the `Origin` a cross-origin post carries), labels and sessions. Browser origin separation is by design and not yet tested in a browser | `tests/test_cookies.py`, `tests/test_gateway.py`, `tests/test_labels.py` |
 | P4 nothing identifying reaches the onion site | Covered for requests, for cookies kept on the server, for the multipart boundary and for the session identifier never reaching Tor | `tests/test_review_fixes.py`, `tests/test_headers.py`, `tests/test_upstream.py`, `tests/test_cookies.py`, `tests/test_gateway.py` |
@@ -143,7 +143,16 @@ The second review looked at the gateway around the rewriter. It found, and the f
 - A site could send endless interim replies, a body with a 204 or 304, or a second `Host` header. These are now refused or ignored.
 - A multipart body gave the site a boundary that identifies the visitor's browser. It is rewritten to a fresh one.
 
-Each fix was checked by undoing it and confirming a test fails. The remaining items are the limits listed in section 6. Attack classes not yet reviewed: charset lead-byte tricks and grammar-based fuzzing of the CSS and HTML parsers.
+Each fix was checked by undoing it and confirming a test fails. The remaining items are the limits listed in section 6.
+
+The two attack classes the reviews had not covered were then tested directly, in `tests/test_grammar_fuzz.py` and `tests/test_browser_fuzz.py`:
+
+- **Character sets.** Multi-byte sets where a lead byte can swallow the next quote, bracket or backslash were tried in every set Python knows, declared in the header and in the page. The rewriter decodes the page itself and sends UTF-8, so what a browser would make of the original bytes does not matter, and no page got through. Pages cannot choose a codec that is not a browser text encoding, such as UTF-7.
+- **Generated pages.** Pages and stylesheets built from a grammar of tags, attributes, addresses, style rules and known mutation-XSS shapes must be refused or come out clean under two other parsers. The same pages were then opened in Chrome with the Content-Security-Policy removed, so that only the rewriter stood in the way. Nothing ran and nothing reached the leak detector. With the stylesheet checks switched off the same test fails, which shows it can see a leak.
+
+This found one real flaw. A stylesheet with an unterminated string or address was passed on with the broken token left in, so the closing brackets the rewriter added could end up inside the string. No address leaked, but browsers recover from such input in ways that differ from one parser to the next. Any declaration containing a tokenizer error is now dropped, and finished CSS must tokenise without errors.
+
+The default run uses a few hundred generated pages. Set `ONIONGLASS_FUZZ_SCALE=10` for a long hunt. One run at eight times the default found nothing more. Still not covered: fuzzing of the form-handling and cookie paths, and any real Tor connection.
 
 ## 11. How this is kept honest
 

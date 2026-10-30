@@ -145,6 +145,10 @@ class _Sanitizer:
                 if mapped is None:
                     return None
                 result.append(self._url_block(mapped, token.source_line, token.source_column))
+            elif isinstance(token, ast.ParseError):
+                # An unterminated string or address, or a stray closing bracket. Browsers recover
+                # from these in ways that are easy to get wrong, so the whole declaration goes.
+                return None
             elif isinstance(token, ast.FunctionBlock):
                 replacement = self._function(token, fonts=fonts, depth=depth)
                 if replacement is None:

@@ -14,19 +14,31 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import uvicorn
 from cryptography.hazmat.primitives import serialization
 
+from onionglass.admin import (
+    AdminError,
+    AdminPaths,
+    held_add,
+    held_list,
+    held_release,
+    kill_off,
+    kill_on,
+    kill_status,
+    paths_from_config,
+    reports_summary,
+)
 from onionglass.config import ConfigError, TeamConfig, load_config, load_private_key
 from onionglass.gateway import Gateway
 from onionglass.hooks import HttpAudit, HttpPolicy, HttpQuota
 from onionglass.tickets import TicketIssuer, generate_key
 from onionglass.upstream import TorFetcher
 
-COMMANDS = frozenset({"serve", "check-config", "keys", "ticket"})
+COMMANDS = frozenset({"serve", "check-config", "keys", "ticket", "admin"})
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -53,7 +65,76 @@ def _parser() -> argparse.ArgumentParser:
     ticket.add_argument("--onion", help="open this onion address on arrival")
     ticket.add_argument("--url", required=True, help="the gateway's address, https://example.org")
     ticket.add_argument("--seconds", type=int, default=60, help="how long the link works")
+    _admin_parser(commands)
     return parser
+
+
+def _admin_parser(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    admin = commands.add_parser("admin", help="stop, release and read reports")
+    admin.add_argument("--config", type=Path, required=True, help="the TOML config file")
+    area = admin.add_subparsers(dest="area", required=True)
+
+    kill = area.add_parser("kill", help="stop and resume serving").add_subparsers(
+        dest="action", required=True
+    )
+    kill.add_parser("status", help="say what is stopped")
+    for name, text in (("on", "stop serving"), ("off", "resume serving")):
+        command = kill.add_parser(name, help=text)
+        scope = command.add_mutually_exclusive_group(required=name == "on")
+        scope.add_argument("--all", action="store_true", help="everything")
+        scope.add_argument("--profile", help="one profile")
+        scope.add_argument("--onion", help="one onion site")
+
+    held = area.add_parser("held", help="sites held for review").add_subparsers(
+        dest="action", required=True
+    )
+    held.add_parser("list", help="show the held sites")
+    add = held.add_parser("add", help="hold a site now")
+    add.add_argument("address")
+    add.add_argument("--reason", default="by an operator")
+    release = held.add_parser("release", help="serve a site again")
+    release.add_argument("address")
+
+    reports = area.add_parser("reports", help="visitor reports").add_subparsers(
+        dest="action", required=True
+    )
+    summary = reports.add_parser("summary", help="the most reported sites")
+    summary.add_argument("--at-least", type=int, default=1, help="only sites with this many")
+
+
+def _scope(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    if args.all:
+        return "all", None
+    if args.profile:
+        return "profile", args.profile
+    if args.onion:
+        return "onion", args.onion
+    return None, None
+
+
+def _admin_action(args: argparse.Namespace, paths: AdminPaths) -> list[str]:
+    scoped = args.area == "kill" and args.action in ("on", "off")
+    scope, value = _scope(args) if scoped else (None, None)
+    actions: dict[tuple[str, str], Callable[[], list[str]]] = {
+        ("kill", "status"): lambda: kill_status(paths),
+        ("kill", "on"): lambda: [kill_on(paths, scope or "all", value)],
+        ("kill", "off"): lambda: [kill_off(paths, scope, value)],
+        ("held", "list"): lambda: held_list(paths),
+        ("held", "add"): lambda: [held_add(paths, args.address, args.reason)],
+        ("held", "release"): lambda: [held_release(paths, args.address)],
+        ("reports", "summary"): lambda: reports_summary(paths, at_least=args.at_least),
+    }
+    return actions[(args.area, args.action)]()
+
+
+def _admin(args: argparse.Namespace) -> int:
+    try:
+        lines = _admin_action(args, paths_from_config(args.config))
+    except AdminError as exc:
+        print(f"onionglass: {exc}", file=sys.stderr)
+        return 2
+    print(chr(10).join(lines))
+    return 0
 
 
 def describe(config: TeamConfig) -> list[str]:
@@ -143,6 +224,8 @@ def run(argv: Sequence[str]) -> int:
         return _generate(args.id, args.out)
     if args.command == "ticket":
         return _ticket(args)
+    if args.command == "admin":
+        return _admin(args)
     try:
         config = load_config(args.config)
     except ConfigError as exc:

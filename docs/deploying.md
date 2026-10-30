@@ -106,16 +106,16 @@ Open the link in a browser. You should land on the entry page signed in, be able
 - A profile that does not exist is refused, and a link works only once.
 - A blocked address is refused, and a held one too.
 - The audit log in `state/audit.log` records what you did, with no page content.
-- `echo all > state/kill` stops the gateway within a couple of seconds, and `rm state/kill` resumes it.
+- `admin kill on --all` stops the gateway within a couple of seconds, and `admin kill off` resumes it.
 - The report button works, and a report appears in `state/reports.log`.
 - From outside, only ports 80 and 443 answer.
 - Stopping both Tor containers makes pages fail with a clear message instead of hanging.
 
 ## 6. Running it
 
-**Stopping.** `echo all > state/kill` stops everything. `echo "profile free" > state/kill` stops one profile. `echo "onion ADDRESS" > state/kill` stops one site. Remove the file to resume. The health check stays up.
+**Stopping.** `docker compose exec gateway onionglass admin --config /etc/onionglass/team.toml kill on --all` stops everything, and `kill off` resumes. `--profile NAME` and `--onion ADDRESS` stop one profile or one site. The health check stays up. Writing `all` into `state/kill` by hand does the same thing if the container is not running.
 
-**Reviewing.** `state/held.txt` is the queue of sites held by the name gate or by enough reports, one per line with the time and the reason. Delete a line to release a site. Look at what is in it as the abuse procedure says, which is as little as you can.
+**Reviewing.** `admin held list` shows the queue of sites held by the name gate or by enough reports, with the time and the reason, and `admin held release ADDRESS` serves one again. `admin reports summary` shows which sites visitors have reported, how many of them and why, without saying who. Look at what is behind a site as the abuse procedure says, which is as little as you can.
 
 **Logs.** The audit log is opened for every line, so moving it away to rotate it just works. Keep it on a disk with room, because a full disk stops the gateway. Decide how long you keep it and write it down.
 

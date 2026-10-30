@@ -63,6 +63,37 @@ Then open `http://localhost:8080/`. The compose file starts three containers:
 
 The container files have not been run by the project's maintainers yet. The continuous-integration job builds both images and checks the compose file, but nobody has watched them start Tor and open a site. Treat them as a starting point and read them first.
 
+## Operating it
+
+The things an operator does in a hurry are commands, and they work on the same files the gateway watches. There is no web admin interface on purpose: it would be one more thing to defend, on a gateway whose job is to be hard to attack. A change takes effect when the gateway next looks at the file, within a couple of seconds, with no restart.
+
+```
+onionglass admin --config team.toml kill status
+onionglass admin --config team.toml kill on --all                  # stop everything
+onionglass admin --config team.toml kill on --profile free         # stop one profile
+onionglass admin --config team.toml kill on --onion ADDRESS        # stop one site
+onionglass admin --config team.toml kill off                       # resume everything
+onionglass admin --config team.toml kill off --profile free        # resume one scope
+
+onionglass admin --config team.toml held list
+onionglass admin --config team.toml held add ADDRESS --reason "why"
+onionglass admin --config team.toml held release ADDRESS
+
+onionglass admin --config team.toml reports summary --at-least 3
+```
+
+- The commands read only the kill, held and report file paths from the config, so they work even when the rest of it would not load.
+- Files are replaced in one step, so the gateway never reads half of one. Comments and other lines are kept. A site that the gateway held in the very moment you released another can be lost, so run `held list` again afterwards if the gateway is busy.
+- `held release` finds the site however its address was written, with or without `.onion` or a sub-domain.
+- The report summary shows how many different visitors reported each site, and why. It never shows who they were.
+- A mistake is one line on the error output and exit code 2, and nothing is changed.
+
+On a deployment from `deploy/team`, run them inside the gateway container:
+
+```
+docker compose exec gateway onionglass admin --config /etc/onionglass/team.toml kill status
+```
+
 ## Blocking, stopping and logging
 
 These options work in personal mode and are the same ones a team deployment uses. All of them are off unless you give them.

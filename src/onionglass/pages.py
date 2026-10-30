@@ -152,6 +152,17 @@ ERRORS: dict[str, tuple[int, str, str]] = {
         "Too many sites",
         "This session has opened as many different onion sites as it is allowed. Start again.",
     ),
+    "quota_exhausted": (
+        429,
+        "Daily allowance used",
+        "This account has used its allowance for today. It starts again at midnight UTC.",
+    ),
+    "quota_unavailable": (
+        503,
+        "Cannot check your allowance",
+        "The service could not check this account's allowance, so it did not carry out the "
+        "request. Try again later.",
+    ),
     "unknown_profile": (
         403,
         "Account not set up",

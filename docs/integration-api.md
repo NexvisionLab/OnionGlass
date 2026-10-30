@@ -30,6 +30,8 @@ Status: draft, no stable version. The shapes below will change before version 1.
 
 The policy and audit hooks exist as Python interfaces, `Policy` and `AuditSink`, and the gateway takes them in its settings. The HTTP form described above is not built yet. The built-in `StaticPolicy` (blocklist and allowlist), `JsonLinesAudit` (a file) and the kill file work now.
 
+The quota hook exists the same way, as the `QuotaMeter` interface with the built-in `LocalQuota`. It is asked how much an account has used today and told what to add. If it cannot answer in time, the request is refused in a profile that has an allowance.
+
 A policy receives who is asking (profile, group, subject), the onion origin and whether this is an `open` or a `fetch`, and returns a decision with the name of the rule that made it. It is never told the visitor's network address. Before every request the gateway checks, in this order, the kill switch, the policy, and then writes the audit record. If the policy raises, takes longer than the hook timeout (2 seconds by default) or answers with anything but a decision, the request is refused. If the audit record cannot be written, the request is refused. After the reply arrives its outcome is recorded, and if that fails the reply is dropped.
 
 ## Ticket

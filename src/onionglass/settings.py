@@ -11,6 +11,7 @@ from onionglass.headers import HeaderPolicy
 from onionglass.hosts import GatewayHosts
 from onionglass.killswitch import KillSwitch
 from onionglass.policy import Policy
+from onionglass.quota import QuotaMeter
 from onionglass.tickets import KeyRing
 
 _COOKIE_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
@@ -30,12 +31,22 @@ class Profile:
     max_asset_bytes: int = 10_000_000
     rewrite_timeout: float = 15.0
     max_requests_per_minute: int | None = None  # per session, every request counts; None: no limit
+    daily_quota: int | None = None  # per account and day, in the units the two costs add up to
+    open_cost: int = 1  # taken when an address is opened
+    page_cost: int = 0  # taken for every web page that comes back
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a profile needs a name")
         if self.max_requests_per_minute is not None and self.max_requests_per_minute < 1:
             raise ValueError("the request limit must be at least 1")
+        if self.open_cost < 0 or self.page_cost < 0:
+            raise ValueError("costs cannot be negative")
+        if self.daily_quota is not None:
+            if self.daily_quota < 1:
+                raise ValueError("the daily quota must be at least 1")
+            if self.open_cost == 0 and self.page_cost == 0:
+                raise ValueError("a daily quota needs a cost, or nothing ever uses it up")
 
     @classmethod
     def restricted(cls) -> Profile:
@@ -74,6 +85,7 @@ class Settings:
     policy: Policy | None = None
     kill: KillSwitch | None = None
     audit: AuditSink | None = None
+    quota: QuotaMeter | None = None
     hook_timeout: float = 2.0
 
     def profile_named(self, name: str) -> Profile | None:
@@ -83,6 +95,10 @@ class Settings:
         return self.profiles.get(name)
 
     def __post_init__(self) -> None:
+        if self.quota is None and any(
+            p.daily_quota is not None for p in (self.profile, *self.profiles.values())
+        ):
+            raise ValueError("a profile has a daily quota but no quota meter is configured")
         for key, value in self.profiles.items():
             if key != value.name or key == self.profile.name:
                 raise ValueError("profiles must be named by their own name, and names are unique")

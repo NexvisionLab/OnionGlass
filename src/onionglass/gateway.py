@@ -247,7 +247,38 @@ class Gateway:
             return False
         return True
 
-    async def _refusal(self, who: _Who, origin: OnionOrigin, action: str, path: str) -> str | None:
+    async def _quota_check(self, who: _Who, profile: Profile, cost: int) -> str | None:
+        """The error kind if this account has no allowance left for ``cost``, else None."""
+        limit = profile.daily_quota
+        meter = self.settings.quota
+        if limit is None or meter is None:
+            return None
+        try:
+            used = await asyncio.wait_for(
+                meter.used(who.subject, profile.name), timeout=self.settings.hook_timeout
+            )
+        except Exception:
+            _log.warning("the quota meter could not be read, so the request was refused")
+            return "quota_unavailable"
+        return "quota_exhausted" if used + max(cost, 1) > limit else None
+
+    async def _charge(self, who: _Who, profile: Profile, units: int) -> bool:
+        """Take ``units`` from the account's allowance. False means the meter failed."""
+        meter = self.settings.quota
+        if profile.daily_quota is None or meter is None or units <= 0:
+            return True
+        try:
+            await asyncio.wait_for(
+                meter.charge(who.subject, profile.name, units), timeout=self.settings.hook_timeout
+            )
+        except Exception:
+            _log.warning("the quota meter could not be written")
+            return False
+        return True
+
+    async def _refusal(
+        self, who: _Who, profile: Profile, origin: OnionOrigin, action: str, path: str
+    ) -> str | None:
         """The error kind that stops this request, or None if it may go ahead.
 
         Order matters: the kill switch is the cheapest and the surest, then the policy, and last
@@ -278,13 +309,25 @@ class Gateway:
                 await self._record("refused", who, origin, action, rule=decision.rule, path=path)
                 return "denied"
             rule = decision.rule
+        cost = profile.open_cost if action == "open" else 0
+        # An empty allowance stops opening. It only stops fetching when pages are what is counted,
+        # so a visitor who has used their opens can still read the sites they already opened.
+        counted = action == "open" or profile.page_cost > 0
+        exhausted = await self._quota_check(who, profile, cost) if counted else None
+        if exhausted is not None:
+            await self._record("refused", who, origin, action, rule="quota", path=path)
+            return exhausted
         if not await self._record("allowed", who, origin, action, rule=rule, path=path):
             return "audit_unavailable"
+        if not await self._charge(who, profile, cost):
+            await self._record("refused", who, origin, action, rule="quota-unavailable", path=path)
+            return "quota_unavailable"
         return None
 
     async def _admit(
         self,
         who: _Who,
+        profile: Profile,
         origin: OnionOrigin,
         action: str,
         *,
@@ -292,7 +335,7 @@ class Gateway:
         apex: bool = False,
     ) -> Response | None:
         """None means go ahead. Anything else is the refusal to send."""
-        kind = await self._refusal(who, origin, action, path)
+        kind = await self._refusal(who, profile, origin, action, path)
         return None if kind is None else self._error(kind, apex=apex)
 
     def _take_rate_slot(self, session_id: str, profile: Profile) -> bool:
@@ -490,7 +533,10 @@ class Gateway:
             return self._apex(body, 400, form=True)
         who = await self._who_of(existing)
         target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
-        refusal = await self._admit(who, parsed.origin, "open", path=target, apex=True)
+        profile = self.settings.profile_named(who.profile)
+        if profile is None:
+            return self._error("unknown_profile", apex=True)
+        refusal = await self._admit(who, profile, parsed.origin, "open", path=target, apex=True)
         if refusal is not None:
             return refusal
         try:
@@ -518,7 +564,8 @@ class Gateway:
         except TicketError as exc:
             _log.info("ticket refused: %s", exc.reason)
             return self._error("forbidden", apex=True)
-        if self.settings.profile_named(claims.profile) is None:
+        ticket_profile = self.settings.profile_named(claims.profile)
+        if ticket_profile is None:
             _log.info("ticket names a profile this gateway does not have")
             return self._error("unknown_profile", apex=True)
         ticket_origin = (
@@ -526,7 +573,9 @@ class Gateway:
         )
         if ticket_origin is not None:
             who = _Who(claims.subject, claims.group, claims.profile)
-            refusal = await self._admit(who, ticket_origin, "open", path="/", apex=True)
+            refusal = await self._admit(
+                who, ticket_profile, ticket_origin, "open", path="/", apex=True
+            )
             if refusal is not None:
                 return refusal
         try:
@@ -611,7 +660,7 @@ class Gateway:
             return self._error("not_permitted")
         if not self._take_rate_slot(session_id, profile):
             return self._error("slow_down")
-        return await self._admit(who, origin, "fetch", path=target)
+        return await self._admit(who, profile, origin, "fetch", path=target)
 
     async def _post_body(
         self, request: Request, who: _Who, profile: Profile, origin: OnionOrigin, target: str
@@ -715,6 +764,9 @@ class Gateway:
         )
         if not recorded:
             return self._error("audit_unavailable")
+        media = parse_content_type(response.header("content-type"))[0]
+        if media in _HTML_TYPES and not await self._charge(who, profile, profile.page_cost):
+            return self._error("quota_unavailable")
         await self.jar.store_from_response(
             session_id, origin, request_target, response.header_all("set-cookie")
         )

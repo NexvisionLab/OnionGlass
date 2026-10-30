@@ -73,6 +73,19 @@ A profile says what a visitor may do: images, fonts, forms and logins, file uplo
 
 The profile is enforced on the request as well as on the page that comes back. A profile without forms refuses a post even if the visitor sends one by hand, and a profile without uploads refuses a body that carries a file. Profiles are set in the gateway's settings (`Settings.profiles`). `Profile.restricted()` is a ready-made text-only profile: no images, fonts, forms, logins or uploads, and 60 requests a minute. Personal mode has one profile and the command line does not change it.
 
+### Daily allowances
+
+A profile can carry a daily allowance per account (`daily_quota`). What it counts is your choice, through two costs: `open_cost` is taken when an address is opened, and `page_cost` for every web page that comes back. Opens per day is `open_cost=1, page_cost=0`. Pages per day is `open_cost=0, page_cost=1`. Any mix works, and the two must not both be zero.
+
+- Counts belong to the account (the subject on the ticket), not the session, and are kept per profile. Opening a second session does not give a second allowance.
+- The day is a UTC day. Counts start again at midnight UTC.
+- A page is charged by what comes back, not by what the browser says it asked for. Images, style sheets and fonts are never charged as pages.
+- When the allowance is spent, opening is refused. Fetching is only refused when pages are what is counted, so a visitor who has used their opens can still read the sites they already opened.
+- With a journal file (`LocalQuota(path)`) the counts survive a restart. Without one they live in memory and a restart starts everyone afresh.
+- If the meter cannot be read or written, the request is refused, and a page whose charge cannot be recorded is withheld. A profile without an allowance is not affected.
+
+The check happens just before a request goes out and the charge just after, so a burst of simultaneous requests can overshoot the allowance by about as many requests as are in flight.
+
 ### The kill file
 
 Create the file to stop serving, delete it or empty it to start again. The gateway looks at it about once a second and does not need a restart. One scope per line:

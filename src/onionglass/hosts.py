@@ -40,6 +40,17 @@ class GatewayHosts:
             raise ValueError("invalid label")
         return f"{label}.{self.base_domain}"
 
+    def is_apex(self, host_header: str) -> bool:
+        """True if the ``Host`` header names the gateway's own domain and nothing else."""
+        if not host_header.isascii() or host_header.startswith("["):
+            return False
+        host, separator, port = host_header.rpartition(":")
+        if not separator:
+            host = host_header
+        elif not port.isdigit():
+            return False
+        return host.lower().removesuffix(".") == self.base_domain
+
     def label_from_host(self, host_header: str) -> str | None:
         """The label in a ``Host`` header, or None if the host is not ``<label>.<base domain>``."""
         if not host_header.isascii() or host_header.startswith("["):

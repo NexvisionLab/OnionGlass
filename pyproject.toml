@@ -29,6 +29,8 @@ dependencies = [
   "nh3>=0.3.7,<0.4",
   "selectolax>=1.0.2,<2",
   "tinycss2>=1.5,<2",
+  "starlette>=1.10,<2",
+  "uvicorn>=0.54,<1",
 ]
 
 [project.optional-dependencies]
@@ -39,8 +41,12 @@ dev = [
   "pytest-cov==7.1.0",
   "hypothesis==6.170.13",
   "pytest-timeout==2.4.0",
+  "httpx2>=2.16,<3",
   "pip-audit==2.10.1",
 ]
+
+[project.scripts]
+onionglass = "onionglass.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/NexvisionLab/onionglass"
@@ -70,6 +76,8 @@ ignore = ["PLR2004"]
 "src/onionglass/upstream.py" = ["PLR0912"]
 # Parsing a header is a run of guard clauses that each reject the input.
 "src/onionglass/cookies.py" = ["PLR0911"]
+# Request handling is a run of checks that each answer with an error page.
+"src/onionglass/gateway.py" = ["PLR0911"]
 
 [tool.mypy]
 python_version = "3.11"

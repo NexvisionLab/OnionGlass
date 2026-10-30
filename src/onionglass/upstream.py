@@ -20,6 +20,7 @@ import time
 import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import h11
 from cryptography import x509
@@ -176,6 +177,14 @@ def _tls_info(writer: asyncio.StreamWriter) -> TlsInfo | None:
         not_after=certificate.not_valid_after_utc.isoformat(),
         self_signed=certificate.subject == certificate.issuer,
     )
+
+
+class Fetcher(Protocol):
+    """Anything that can fetch a page from an onion site. ``TorFetcher`` is the real one."""
+
+    async def fetch(
+        self, request: UpstreamRequest, *, max_body_bytes: int | None = None
+    ) -> UpstreamResponse: ...
 
 
 class TorFetcher:

@@ -55,9 +55,12 @@ class LabelTarget:
 class LabelBook:
     """Creates labels for (session, onion) pairs and resolves them back."""
 
-    def __init__(self, store: SessionStore, *, ttl: float) -> None:
+    def __init__(
+        self, store: SessionStore, *, ttl: float, max_per_session: int | None = None
+    ) -> None:
         self._store = store
         self._ttl = ttl
+        self._max_per_session = max_per_session
 
     async def label_for(self, session_id: str, origin: OnionOrigin) -> str:
         """The label for this session and onion origin. Created on first use, stable after."""
@@ -67,12 +70,18 @@ class LabelBook:
         existing = await self._store.get(forward_key)
         if existing is not None:
             return existing
+        count_key = f"lblcount:{session_id}"
+        used = int(await self._store.get(count_key) or 0)
+        if self._max_per_session is not None and used >= self._max_per_session:
+            # A hostile page can name endless sites. Each session gets a fixed number of labels.
+            raise LabelError("too many sites in this session")
         reverse_value = json.dumps([session_id, origin.key], separators=(",", ":"))
         for _ in range(_ATTEMPTS):
             candidate = new_label()
             if not await self._store.add_if_absent(f"rev:{candidate}", reverse_value, self._ttl):
                 continue
             if await self._store.add_if_absent(forward_key, candidate, self._ttl):
+                await self._store.put(count_key, str(used + 1), self._ttl)
                 return candidate
             # Another request created a label for this pair first. Use theirs.
             await self._store.delete(f"rev:{candidate}")

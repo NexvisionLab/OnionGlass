@@ -114,6 +114,31 @@ def document_headers(policy: HeaderPolicy) -> dict[str, str]:
     }
 
 
+def apex_headers(policy: HeaderPolicy, *, form: bool = False) -> dict[str, str]:
+    """Headers for the gateway's own pages on its main domain: entry form, warnings, errors.
+
+    These pages have a few lines of inline style and, for the entry form, a form that posts back
+    to the gateway. Nothing else is allowed, and no other site may frame them.
+    """
+    csp = "; ".join(
+        (
+            "default-src 'none'",
+            "style-src 'unsafe-inline'",
+            "script-src 'none'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "connect-src 'none'",
+            "form-action 'self'" if form else "form-action 'none'",
+            "frame-ancestors 'none'",
+        )
+    )
+    return {
+        **_common(policy),
+        "Content-Security-Policy": csp,
+        "Content-Type": "text/html; charset=utf-8",
+    }
+
+
 def resource_headers(policy: HeaderPolicy, content_type: str) -> dict[str, str]:
     """Headers for anything that is not a page: stylesheets, images, fonts and files.
 

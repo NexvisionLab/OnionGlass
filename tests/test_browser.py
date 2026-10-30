@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
@@ -159,6 +160,7 @@ def running_gateway(
     allow_images: bool,
     site: Callable[[str], Fetcher] | None = None,
     reports: ReportQueue | None = None,
+    show_entities: bool = False,
 ) -> Iterator[Running]:
     with leak_detector() as detector:
         port = free_port()
@@ -167,7 +169,7 @@ def running_gateway(
             scheme="http",
             port=port,
             open_mode=True,
-            profile=Profile(allow_images=allow_images),
+            profile=Profile(allow_images=allow_images, show_entities=show_entities),
             reports=reports,
         )
         leak = f"http://127.0.0.1:{detector.port}"
@@ -354,6 +356,55 @@ def test_the_report_button_works_under_the_viewers_policy(browser: Browser, tmp_
         lines = (tmp_path / "reports.log").read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1 and TOR_PROJECT in lines[0] and "harmful" in lines[0]
         assert running.detector.hits == []
+        context.close()
+
+
+class WalletOnion:
+    """A page that names a wallet and an email address, and tries to put markup in the panel."""
+
+    PAGE = (
+        "<!doctype html><title>Shop</title><h1>Wallets</h1>"
+        "<p>1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa and sales@example.org</p>"
+        '<p>"><img src=x onerror=alert(1)>@example.org</p>'
+    )
+
+    async def fetch(
+        self, request: UpstreamRequest, *, max_body_bytes: int | None = None
+    ) -> UpstreamResponse:
+        return UpstreamResponse(
+            status=200,
+            reason="OK",
+            headers=(("content-type", "text/html; charset=utf-8"),),
+            body=self.PAGE.encode(),
+            elapsed=0.0,
+        )
+
+
+def test_the_entity_panel_lists_what_the_page_names_as_plain_text(browser: Browser) -> None:
+    with running_gateway(
+        allow_images=False, show_entities=True, site=lambda _leak: WalletOnion()
+    ) as running:
+        context = browser.new_context()
+        page = context.new_page()
+        page.set_default_timeout(15_000)
+        dialogs: list[str] = []
+
+        def refuse(dialog: Any) -> None:
+            dialogs.append(dialog.message)
+            dialog.dismiss()
+
+        page.on("dialog", refuse)
+        open_in_viewer(page, running, f"{TOR_PROJECT}.onion")
+        page.frame_locator("#frame").get_by_role("heading", name="Wallets").wait_for()
+        expect(page.locator("#entities-toggle")).to_have_text(re.compile(r"Entities \(\d+\)"))
+        expect(page.locator("#entities")).to_be_hidden()
+        page.locator("#entities-toggle").click()
+        expect(page.locator("#entities")).to_be_visible()
+        listing = page.locator("#entities-list").inner_text()
+        assert "bitcoin: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" in listing
+        assert "email: sales@example.org" in listing
+        assert page.locator("#entities-list img").count() == 0
+        assert dialogs == [] and running.detector.hits == []
         context.close()
 
 

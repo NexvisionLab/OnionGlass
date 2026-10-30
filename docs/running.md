@@ -151,6 +151,16 @@ With `--report-file FILE`, the viewer shows a "Report this site" button next to 
 - With `--hold-after N` (and `--held-file`), a site that N different visitors have reported is held, so nobody can open it until a person has looked and removed its line from the held file.
 - If the file cannot be written, the visitor is told the report was not recorded.
 
+### The entity panel
+
+A profile with `show_entities = true` gets an "Entities" button in the viewer's toolbar. It lists the wallets, email addresses and onion addresses that the page names, as plain text, so an analyst can note them without reading the page closely. It is off by default and off in the restricted preset.
+
+- **Wallets are checked.** Bitcoin (legacy, script and segwit, including taproot), Ethereum (a mixed-case address must pass its capital-letter checksum) and Monero addresses are only listed if their own checksum holds. A transaction hash, a token or a made-up address is not listed.
+- **Onion addresses** are listed with their checksum checked, and the sub-domain is dropped.
+- **Only what the page shows is read.** Text inside scripts, style sheets and attributes is not. Up to 500,000 characters of a page are read, and at most 100 entities are listed, 40 of any one kind.
+- **Nothing is fetched.** Looking for an entity never contacts it. The list is kept with the current page for the session and is gone when the session ends.
+- **It is a lead, not proof.** A wallet on a page may be copied from somewhere else. Sending entities on to a case system is for the integration, not this release.
+
 ### Look-alike warning
 
 Copycat onion sites are made by searching for an address that starts like a popular one: a few characters are cheap to match, and the end of an address is a checksum that cannot be chosen. With `--known-sites FILE` (or `[known_sites]` in the config file), you list the sites people are likely to mean, one per line, the address and then a name:

@@ -37,6 +37,7 @@ from onionglass import pages
 from onionglass.audit import AuditEvent
 from onionglass.cookies import CookieJar, RequestContext
 from onionglass.decode import DecodeError, decode_body
+from onionglass.entities import extract_entities
 from onionglass.headers import (
     ACCEPT_ANY,
     ACCEPT_HTML,
@@ -804,7 +805,13 @@ class Gateway:
             return self._error("forbidden", apex=True)
         path_only, _, query = path.partition("?")
         source = self._gateway_url(label, path_only, query)
-        page = pages.viewer_page(source, can_report=self.settings.reports is not None)
+        who = await self._who_of(session_id)
+        profile = self.settings.profile_named(who.profile)
+        page = pages.viewer_page(
+            source,
+            can_report=self.settings.reports is not None,
+            can_show_entities=profile is not None and profile.show_entities,
+        )
         return Response(page, 200, viewer_headers(self.settings.header_policy))
 
     def _viewer_script(self) -> Response:
@@ -818,13 +825,20 @@ class Gateway:
         frame_url: str,
         title: str,
         refresh: str = "",
+        entities: list[dict[str, str]] | None = None,
     ) -> None:
         """What the viewer shows about the page: its address, the frame to reload, its title, and
         where the page asked to be sent. The last is shown in the toolbar, because a page can hide
         everything inside its own frame."""
-        record = json.dumps(
-            {"url": page_url.url, "frame": frame_url, "title": title, "refresh": refresh}
-        )
+        shown: dict[str, Any] = {
+            "url": page_url.url,
+            "frame": frame_url,
+            "title": title,
+            "refresh": refresh,
+        }
+        if entities is not None:
+            shown["entities"] = entities
+        record = json.dumps(shown)
         await self.store.put(f"cur:{session_id}", record, self.settings.session_ttl)
 
     def _metrics(self, request: Request) -> Response:
@@ -1159,8 +1173,21 @@ class Gateway:
         text = mapper.substitute(result.body.decode("utf-8"), labels)
         if frame_url is not None and status < 400:
             refresh = mapper.substitute(result.refresh_url, labels) if result.refresh_url else ""
-            await self._remember_page(session_id, page_url, frame_url, result.title, refresh)
+            entities = await self._entities_of(result.text, profile)
+            await self._remember_page(
+                session_id, page_url, frame_url, result.title, refresh, entities
+            )
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
+
+    async def _entities_of(self, text: str, profile: Profile) -> list[dict[str, str]] | None:
+        """What the page names, for a profile that may see it, else None. Never fails the page."""
+        if not profile.show_entities:
+            return None
+        try:
+            found = await self._in_thread(lambda: extract_entities(text), profile)
+        except TimeoutError:
+            return []
+        return [{"kind": entity.kind, "value": entity.value} for entity in found]
 
     async def _name_gate_hit(
         self,

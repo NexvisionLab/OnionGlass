@@ -311,6 +311,32 @@ VIEWER_SCRIPT = """(function () {
   var redirectGo = document.getElementById("redirect-go");
   var redirectTarget = "";
   var redirectDone = "";
+  var entitiesBox = document.getElementById("entities");
+  var entitiesList = document.getElementById("entities-list");
+  var entitiesToggle = document.getElementById("entities-toggle");
+
+  // Entities are shown as plain text, never as markup or links.
+  function showEntities(items) {
+    if (!entitiesBox) { return; }
+    entitiesList.textContent = "";
+    var shown = 0;
+    for (var i = 0; i < items.length && shown < 100; i++) {
+      var item = items[i];
+      if (!item || typeof item.kind !== "string" || typeof item.value !== "string") { continue; }
+      var row = document.createElement("li");
+      row.textContent = item.kind + ": " + item.value;
+      entitiesList.appendChild(row);
+      shown++;
+    }
+    entitiesToggle.textContent = "Entities (" + shown + ")";
+    entitiesToggle.hidden = shown === 0;
+    if (shown === 0) { entitiesBox.hidden = true; }
+  }
+  if (entitiesToggle) {
+    entitiesToggle.addEventListener("click", function () {
+      entitiesBox.hidden = !entitiesBox.hidden;
+    });
+  }
 
   // Only an address on this gateway may be followed from the toolbar.
   function onThisGateway(value) {
@@ -331,6 +357,7 @@ VIEWER_SCRIPT = """(function () {
           current = data.url;
           address.textContent = data.url;
           if (typeof data.frame === "string") { frameUrl = data.frame; }
+          if (Array.isArray(data.entities)) { showEntities(data.entities); }
           if (typeof data.title === "string" && data.title) {
             document.title = data.title + " - onionglass";
           }
@@ -398,6 +425,9 @@ _VIEWER_STYLE = (
     "[hidden]{display:none!important}"
     "#redirect{flex-basis:100%;display:flex;gap:.6rem;align-items:center;padding:.3rem .5rem;"
     "background:#fff8e1;border:1px solid #c90;border-radius:4px}"
+    "#entities{flex-basis:100%;max-height:30vh;overflow:auto;border:1px solid #ccc;"
+    "padding:.3rem .6rem;font:.8rem ui-monospace,monospace}#entities ul{margin:0;padding-left:1rem}"
+    "#entities li{word-break:break-all}"
     "#address{flex:1;min-width:10rem;font-family:ui-monospace,monospace;word-break:break-all}"
     "button{font-size:.85rem;padding:.2rem .6rem}#frame{flex:1;width:100%;border:0;background:#fff}"
     "@media(prefers-color-scheme:dark){body{color:#eee;background:#161616}"
@@ -429,9 +459,16 @@ def _report_controls() -> str:
     )
 
 
-def viewer_page(frame_src: str, *, can_report: bool = False) -> bytes:
+def viewer_page(
+    frame_src: str, *, can_report: bool = False, can_show_entities: bool = False
+) -> bytes:
     """The page that frames an onion site, with the real address shown above it."""
     controls = _report_controls() if can_report else ""
+    if can_show_entities:
+        controls += '<button id="entities-toggle" type="button" hidden>Entities</button>'
+    panel = (
+        '<div id="entities" hidden><ul id="entities-list"></ul></div>' if can_show_entities else ""
+    )
     document = (
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -445,7 +482,7 @@ def viewer_page(frame_src: str, *, can_report: bool = False) -> bytes:
         '<output id="address" aria-label="Address of the page you are viewing">Loading...</output>'
         '<button id="copy" type="button">Copy address</button>'
         '<button id="reload" type="button">Reload</button>'
-        f'{controls}<a href="/">Open another address</a></div>'
+        f'{controls}<a href="/">Open another address</a>{panel}</div>'
         f'<iframe id="frame" title="Page from the onion site" src="{html.escape(frame_src)}" '
         'sandbox="allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox" '
         'referrerpolicy="no-referrer"></iframe>'

@@ -40,6 +40,7 @@ MAX_TEXT_ATTRIBUTE = 1000
 MAX_SHORT_ATTRIBUTE = 200
 MAX_TITLE = 200
 MAX_HEADINGS = 5
+MAX_CAPTURED_TEXT = 500_000
 
 # Only encodings that browsers themselves decode. Python knows many more, some of which are not
 # text encodings at all, and a page must not be able to pick one of those.
@@ -204,6 +205,7 @@ class RewriteResult:
     blocked_forms: int
     refresh_url: str | None
     headings: tuple[str, ...] = ()
+    text: str = ""  # the text shown on the page, for finding entities in
 
 
 def decode_document(data: bytes, declared_charset: str | None = None) -> str:
@@ -251,6 +253,8 @@ class _Emitter:
         self.out: list[str] = []
         self.title = ""
         self.headings: list[str] = []
+        self.text_parts: list[str] = []
+        self._text_size = 0
         self.has_password_field = False
         self.withheld_images = 0
         self.external_links = 0
@@ -266,6 +270,13 @@ class _Emitter:
         if resolved.kind == "external":
             self.external_links += 1
         return resolved
+
+    def _capture(self, text: str) -> None:
+        """Keep the text shown on the page, up to a limit, for finding entities in."""
+        room = MAX_CAPTURED_TEXT - self._text_size
+        if room > 0 and text.strip():
+            self.text_parts.append(text[:room])
+            self._text_size += min(len(text), room) + 1
 
     def _attr_text(self, value: str, limit: int) -> str:
         return html_lib.escape(_printable(value, limit), quote=True)
@@ -533,6 +544,7 @@ class _Emitter:
                 if parent in ("pre", "textarea") and text.startswith("\n"):
                     text = "\n" + text
                 self.out.append(html_lib.escape(text, quote=False))
+                self._capture(text)
                 current = current.next
                 continue
             if tag.startswith("-") or tag == "!doctype":
@@ -647,6 +659,7 @@ def _rewrite_html(
         blocked_forms=emitter.blocked_forms,
         refresh_url=emitter.refresh_url,
         headings=tuple(emitter.headings),
+        text="\n".join(emitter.text_parts),
     )
 
 

@@ -59,6 +59,7 @@ page_cost = 0
 
 [profiles.analyst]
 allow_images = true
+show_entities = true            # list wallets, emails and onion addresses the page names
 max_requests_per_minute = 300
 
 [policy]

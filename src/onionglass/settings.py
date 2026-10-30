@@ -46,6 +46,7 @@ class Profile:
     name: str = "personal"
     allow_images: bool = False
     allow_fonts: bool = True
+    show_entities: bool = False  # list the wallets, emails and onion addresses a page names
     allow_post_forms: bool = True
     allow_uploads: bool = False
     allow_password_fields: bool = True

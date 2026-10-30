@@ -191,6 +191,74 @@ def landing_page(*, notice: str | None = None, can_open: bool = True) -> bytes:
     return _page("onionglass", body)
 
 
+VIEWER_SCRIPT = """(function () {
+  "use strict";
+  var frame = document.getElementById("frame");
+  var address = document.getElementById("address");
+  var current = "";
+  var frameUrl = frame.getAttribute("src");
+
+  function update() {
+    fetch("/_og/current", { credentials: "same-origin", cache: "no-store" })
+      .then(function (response) { return response.ok ? response.json() : {}; })
+      .then(function (data) {
+        if (data && typeof data.url === "string") {
+          current = data.url;
+          address.textContent = data.url;
+          if (typeof data.frame === "string") { frameUrl = data.frame; }
+          if (typeof data.title === "string" && data.title) {
+            document.title = data.title + " - onionglass";
+          }
+        }
+      })
+      .catch(function () {});
+  }
+
+  document.getElementById("copy").addEventListener("click", function () {
+    if (current && navigator.clipboard) {
+      navigator.clipboard.writeText(current).catch(function () {});
+    }
+  });
+  document.getElementById("reload").addEventListener("click", function () {
+    frame.src = frameUrl;
+  });
+  update();
+  window.setInterval(update, 1500);
+})();
+"""
+
+_VIEWER_STYLE = (
+    "html,body{height:100%;margin:0}body{display:flex;flex-direction:column;"
+    "font:14px/1.4 system-ui,sans-serif;color:#1b1b1b;background:#fafafa}"
+    "#bar{padding:.4rem .7rem;border-bottom:1px solid #ccc;display:flex;flex-wrap:wrap;"
+    "gap:.4rem .8rem;align-items:center}#notice{flex-basis:100%;font-size:.8rem;color:#6b4e00}"
+    "#address{flex:1;min-width:10rem;font-family:ui-monospace,monospace;word-break:break-all}"
+    "button{font-size:.85rem;padding:.2rem .6rem}#frame{flex:1;width:100%;border:0;background:#fff}"
+    "@media(prefers-color-scheme:dark){body{color:#eee;background:#161616}"
+    "#bar{border-color:#444}#notice{color:#f0c060}a{color:#8ab4ff}}"
+)
+
+
+def viewer_page(frame_src: str) -> bytes:
+    """The page that frames an onion site, with the real address shown above it."""
+    document = (
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex, nofollow">'
+        f"<title>onionglass</title><style>{_VIEWER_STYLE}</style></head><body>"
+        '<div id="bar"><div id="notice">'
+        f"{html.escape(OPERATOR_NOTICE)}</div>"
+        '<output id="address" aria-label="Address of the page you are viewing">Loading...</output>'
+        '<button id="copy" type="button">Copy address</button>'
+        '<button id="reload" type="button">Reload</button>'
+        '<a href="/">Open another address</a></div>'
+        f'<iframe id="frame" title="Page from the onion site" src="{html.escape(frame_src)}" '
+        'sandbox="allow-forms allow-same-origin" referrerpolicy="no-referrer"></iframe>'
+        '<script src="/_og/viewer.js"></script></body></html>'
+    )
+    return document.encode("utf-8")
+
+
 def blocked_page() -> bytes:
     body = (
         "<h1>Link not available</h1>"

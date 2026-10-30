@@ -139,6 +139,32 @@ def apex_headers(policy: HeaderPolicy, *, form: bool = False) -> dict[str, str]:
     }
 
 
+def viewer_headers(policy: HeaderPolicy) -> dict[str, str]:
+    """Headers for the viewer page: a toolbar with one small script and a frame for the site.
+
+    The script is served by the gateway itself and nothing inline may run. The frame may only
+    show the gateway's own label hosts, and no other site may frame the viewer.
+    """
+    csp = "; ".join(
+        (
+            "default-src 'none'",
+            "script-src 'self'",
+            "connect-src 'self'",
+            "style-src 'unsafe-inline'",
+            f"frame-src {policy.source}",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+        )
+    )
+    return {
+        **_common(policy),
+        "Content-Security-Policy": csp,
+        "Content-Type": "text/html; charset=utf-8",
+    }
+
+
 def resource_headers(policy: HeaderPolicy, content_type: str) -> dict[str, str]:
     """Headers for anything that is not a page: stylesheets, images, fonts and files.
 

@@ -8,7 +8,7 @@ import gzip
 import logging
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from starlette.testclient import TestClient
@@ -106,7 +106,14 @@ class Env:
         """Open an address through the entry form and return the label that serves it."""
         response = self.client.post("/open", data={"address": address})
         assert response.status_code == 303, response.text
-        return self.label_in(response.headers["location"])
+        return self.viewer_label(response.headers["location"])
+
+    @staticmethod
+    def viewer_label(location: str) -> str:
+        """The label named by a redirect to the viewer page."""
+        parts = urlsplit(location)
+        assert parts.path == "/view", location
+        return parse_qs(parts.query)["l"][0]
 
     def get(self, label: str, path: str = "/", **kwargs: Any) -> Any:
         headers = {"host": f"{label}.localhost:{PORT}", **kwargs.pop("headers", {})}
@@ -140,10 +147,13 @@ def test_opening_an_address_redirects_to_an_opaque_label_and_sets_a_session() ->
     assert response.status_code == 303
     location = response.headers["location"]
     parts = urlsplit(location)
-    assert parts.hostname is not None and parts.hostname.endswith(".localhost")
+    assert parts.hostname == "localhost" and parts.port == PORT  # the viewer, on the main domain
+    assert parts.path == "/view"
+    fields = parse_qs(parts.query)
+    assert len(fields["l"][0]) == 26
+    assert fields["p"] == ["/some/page?x=1"]
     assert TOR_PROJECT not in location
     assert "onion" not in location
-    assert parts.path == "/some/page" and parts.query == "x=1" and parts.port == PORT
     assert "og_session" in response.headers["set-cookie"]
     assert "httponly" in response.headers["set-cookie"].lower()
     assert env.fetcher.requests == []  # nothing is fetched until the label is used
@@ -757,8 +767,9 @@ def test_a_ticket_can_open_one_onion_directly() -> None:
     env = Deployed()
     response = env.client.get("/enter", params={"t": env.ticket(onion=TOR_PROJECT)})
     assert response.status_code == 303
-    assert (urlsplit(response.headers["location"]).hostname or "").endswith(".gw.example")
-    assert TOR_PROJECT not in response.headers["location"]
+    location = response.headers["location"]
+    assert location.startswith("https://gw.example/view?l=")
+    assert TOR_PROJECT not in location
 
 
 def test_labels_need_the_matching_session_cookie_on_a_real_domain() -> None:
@@ -768,8 +779,7 @@ def test_labels_need_the_matching_session_cookie_on_a_real_domain() -> None:
         "/open", data={"address": PAGE}, headers={"origin": "https://gw.example"}
     )
     assert opened.status_code == 303
-    label_host = urlsplit(opened.headers["location"]).hostname
-    assert label_host is not None
+    label_host = f"{Env.viewer_label(opened.headers['location'])}.gw.example"
     assert env.client.get("/", headers={"host": label_host}).status_code == 200
     stranger = TestClient(env.gateway.app, base_url="https://gw.example", follow_redirects=False)
     assert stranger.get("/", headers={"host": label_host}).status_code == 403

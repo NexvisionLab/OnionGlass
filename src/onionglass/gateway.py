@@ -19,7 +19,7 @@ import logging
 import secrets
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -37,8 +37,9 @@ from onionglass.headers import (
     parse_content_type,
     resource_headers,
     upstream_request_headers,
+    viewer_headers,
 )
-from onionglass.labels import LabelBook, LabelError, is_valid_session_id
+from onionglass.labels import LabelBook, LabelError, is_valid_label, is_valid_session_id
 from onionglass.mapper import PlaceholderMapper
 from onionglass.onion import InvalidOnionError, OnionHost, OnionOrigin, OnionUrl, parse_onion_url
 from onionglass.rewrite.css import CssError, CssOptions, sanitize_stylesheet, verify_stylesheet
@@ -84,6 +85,7 @@ _ACCEPT_BY_DESTINATION = {
     "font": ACCEPT_ANY,
 }
 _FORM_LIMIT = 8192
+_NAVIGATION_DESTINATIONS = frozenset({"iframe", "document", "frame"})
 
 
 class Gateway:
@@ -209,6 +211,12 @@ class Gateway:
             return await self._enter(request)
         if path == "/_og/external" and method in ("GET", "HEAD"):
             return self._external(request)
+        if path == "/view" and method == "GET":
+            return await self._viewer(request)
+        if path == "/_og/current" and method == "GET":
+            return await self._current_page(request)
+        if path == "/_og/viewer.js" and method == "GET":
+            return self._viewer_script()
         if path == "/_og/blocked":
             return self._apex(pages.blocked_page(), 403)
         if path == "/_og/health":
@@ -263,7 +271,7 @@ class Gateway:
         except LabelError:
             return self._error("session_limit", apex=True)
         headers = apex_headers(self.settings.header_policy)
-        headers["Location"] = self._gateway_url(label, parsed.path, parsed.query)
+        headers["Location"] = self._viewer_url(label, parsed.path, parsed.query)
         response = Response(status_code=303, headers=headers)
         if existing is None:
             self._set_session_cookie(response, session_id)
@@ -282,7 +290,9 @@ class Gateway:
         if claims.onion is not None:
             origin = OnionOrigin("http", OnionHost(claims.onion), 80)
             try:
-                location = self._gateway_url(await self.labels.label_for(session_id, origin))
+                location = self._viewer_url(
+                    await self.labels.label_for(session_id, origin), "/", ""
+                )
             except LabelError:
                 return self._error("session_limit", apex=True)
         headers = apex_headers(self.settings.header_policy)
@@ -290,6 +300,54 @@ class Gateway:
         response = Response(status_code=303, headers=headers)
         self._set_session_cookie(response, session_id)
         return response
+
+    # --- the viewer ------------------------------------------------------------------------
+
+    def _viewer_url(self, label: str, path: str, query: str) -> str:
+        target = path + (f"?{query}" if query else "")
+        return f"{self.settings.apex_origin}/view?l={label}&p={quote(target, safe='')}"
+
+    async def _viewer(self, request: Request) -> Response:
+        session_id = await self._current_session(request)
+        if session_id is None:
+            return self._error("sign_in_required", apex=True)
+        label = request.query_params.get("l", "")
+        path = request.query_params.get("p", "/")
+        usable = (
+            is_valid_label(label)
+            and path.startswith("/")
+            and not path.startswith("//")
+            and path.isascii()
+            and len(path) <= 2048
+            and not any(ord(c) <= 0x20 or ord(c) == 0x7F or c in "\\#" for c in path)
+        )
+        if not usable:
+            return self._error("bad_request", apex=True)
+        target = await self.labels.resolve(label)
+        if target is None or target.session_id != session_id:
+            return self._error("forbidden", apex=True)
+        path_only, _, query = path.partition("?")
+        source = self._gateway_url(label, path_only, query)
+        return Response(pages.viewer_page(source), 200, viewer_headers(self.settings.header_policy))
+
+    def _viewer_script(self) -> Response:
+        headers = resource_headers(self.settings.header_policy, "text/javascript; charset=utf-8")
+        return Response(pages.VIEWER_SCRIPT.encode("ascii"), 200, headers)
+
+    async def _remember_page(
+        self, session_id: str, page_url: OnionUrl, frame_url: str, title: str
+    ) -> None:
+        record = json.dumps({"url": page_url.url, "frame": frame_url, "title": title})
+        await self.store.put(f"cur:{session_id}", record, self.settings.session_ttl)
+
+    async def _current_page(self, request: Request) -> Response:
+        headers = apex_headers(self.settings.header_policy)
+        headers["Content-Type"] = "application/json"
+        session_id = await self._current_session(request)
+        if session_id is None:
+            return Response(b"{}", 403, headers)
+        record = await self.store.get(f"cur:{session_id}")
+        return Response((record or "{}").encode("utf-8"), 200, headers)
 
     # --- onion content ---------------------------------------------------------------------
 
@@ -351,10 +409,20 @@ class Gateway:
         await self.jar.store_from_response(
             session_id, origin, request_target, response.header_all("set-cookie")
         )
-        return await self._deliver(session_id, page_url, method, response)
+        frame_url = (
+            self._gateway_url(label, raw_path.decode("ascii"), query.decode("ascii"))
+            if destination in _NAVIGATION_DESTINATIONS
+            else None
+        )
+        return await self._deliver(session_id, page_url, method, response, frame_url)
 
     async def _deliver(
-        self, session_id: str, page_url: OnionUrl, method: str, response: UpstreamResponse
+        self,
+        session_id: str,
+        page_url: OnionUrl,
+        method: str,
+        response: UpstreamResponse,
+        frame_url: str | None = None,
     ) -> Response:
         settings = self.settings
         profile = settings.profile
@@ -372,7 +440,7 @@ class Gateway:
         if media in _HTML_TYPES:
             if method == "HEAD":
                 return Response(b"", status, document_headers(policy))
-            return await self._deliver_html(session_id, page_url, body, charset, status)
+            return await self._deliver_html(session_id, page_url, body, charset, status, frame_url)
         if media == "text/css":
             return await self._deliver_css(session_id, page_url, body, charset, status)
         if media in _FONT_TYPES and profile.allow_fonts:
@@ -402,7 +470,13 @@ class Gateway:
         )
 
     async def _deliver_html(
-        self, session_id: str, page_url: OnionUrl, body: bytes, charset: str | None, status: int
+        self,
+        session_id: str,
+        page_url: OnionUrl,
+        body: bytes,
+        charset: str | None,
+        status: int,
+        frame_url: str | None = None,
     ) -> Response:
         profile = self.settings.profile
         mapper = PlaceholderMapper(self.settings)
@@ -421,6 +495,8 @@ class Gateway:
             return self._error("rewrite_failed")
         labels = await self._label_map(session_id, mapper)
         text = mapper.substitute(result.body.decode("utf-8"), labels)
+        if frame_url is not None and status < 400:
+            await self._remember_page(session_id, page_url, frame_url, result.title)
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
 
     async def _deliver_css(

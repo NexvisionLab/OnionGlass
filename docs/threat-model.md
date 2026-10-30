@@ -94,16 +94,35 @@ Anonymity of the visitor against the operator, circumventing law enforcement or 
 
 | Property | Status | Tests |
 |---|---|---|
-| P1 no script executes | Rewriter output and sandbox header covered. Not yet tested in a real browser | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_headers.py` |
-| P2 no third-party contact | Covered for rewritten pages and stylesheets. The request path is not built yet | `tests/test_rewrite_urls.py`, `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py` |
-| P4 nothing identifying reaches the onion site | Covered for upstream requests. Cookie handling is not built yet | `tests/test_headers.py`, `tests/test_upstream.py` |
-| P5 only valid v3 onion destinations | Covered for parsing and for the Tor fetcher | `tests/test_onion.py`, `tests/test_upstream.py` |
-| P6 withheld images never requested | Covered in the rewriter. Not yet checked end to end | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py` |
+| P1 no script executes | Covered end to end, and checked by hand in a real browser (section 9) | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_rewrite_review.py`, `tests/test_headers.py`, `tests/test_gateway.py` |
+| P2 no third-party contact | Covered end to end, and checked by hand in a real browser. Verification of finished CSS is separate from the rewriter | `tests/test_rewrite_urls.py`, `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
+| P3 one onion cannot read another's data | Covered for cookies, labels and sessions. Browser origin separation is by design and not yet tested in a browser | `tests/test_cookies.py`, `tests/test_gateway.py`, `tests/test_labels.py` |
+| P4 nothing identifying reaches the onion site | Covered for requests and for cookies kept on the server | `tests/test_headers.py`, `tests/test_upstream.py`, `tests/test_cookies.py`, `tests/test_gateway.py` |
+| P5 only valid v3 onion destinations | Covered for parsing, requests and the Tor fetcher | `tests/test_onion.py`, `tests/test_upstream.py`, `tests/test_gateway.py` |
+| P6 withheld images never requested | Covered end to end, and checked by hand in a real browser | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_gateway.py` |
+| P7 fail closed | Partly: rewrite and decode failures refuse. Policy and audit dependencies do not exist yet | `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
+| P8 no bodies or passwords in logs | Partly: nothing identifying is logged on failures. Audit logging does not exist yet | `tests/test_gateway.py` |
 | P9 tickets cannot be forged or replayed | Covered | `tests/test_tickets.py` |
-| P11 onion address absent from host names | Covered for label generation and mapping | `tests/test_labels.py`, `tests/test_hosts.py` |
-| P3, P7, P8, P10 | Not yet implemented | none |
+| P10 visitor addresses not logged | Partly: the gateway logs no addresses and access logging is off in personal mode | `tests/test_gateway.py` |
+| P11 onion address absent from host names | Covered for label generation and mapping, and checked in a real browser | `tests/test_labels.py`, `tests/test_hosts.py`, `tests/test_gateway.py` |
 
-## 9. How this is kept honest
+## 9. Checked by hand in a real browser
+
+On 2026-10-30 the gateway was run in personal mode against a fake onion site serving a deliberately hostile page, with a second local web server acting as a leak detector. Chrome opened the page. The page tried inline script, an `onload` and an `onerror` handler, a script that requests an outside address, remote and relative images, `srcset` and `picture`, an `image-set()` in a style attribute and in stylesheets (including through a variable), `@import`, a linked stylesheet, `url()` in many properties, a hostile `base`, a meta refresh, frames, objects, video and audio, an SVG with `onload`, table backgrounds, a form posting to the outside, and a `javascript:` link.
+
+| Result | Images off | Images on |
+|---|---|---|
+| Script, `onload`, `onerror` ran | No | No |
+| Script elements, image, frame, object elements present | None | Only the images the gateway allowed |
+| Requests made by the page | One, its own stylesheet | Its own stylesheet and two of its own images, all on the gateway |
+| Requests that reached the leak detector | None | None |
+| Own stylesheet and inline colour applied | Yes | Yes |
+
+This found one real bug that the automated tests had missed: with a `no-referrer` policy Chrome sends `Origin: null` on a same-origin form post, and the gateway wrongly refused it. It is fixed and has a regression test.
+
+Not covered by this check: the entry form's redirect to a label host could not be completed in the test browser, which aborted the redirect to a different host name (the gateway's reply was confirmed correct with curl, and opening the label address directly worked); the browser's behaviour with the viewer page and a sandboxed frame, which does not exist yet; and anything involving a real Tor connection. An automated browser test for the properties above is planned.
+
+## 10. How this is kept honest
 
 - Each property has a named test in the `tests` directory. A property without a test is a bug.
 - A hostile-input corpus grows with every report.

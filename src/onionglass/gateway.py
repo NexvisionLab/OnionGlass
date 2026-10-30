@@ -163,9 +163,16 @@ class Gateway:
         return b"".join(chunks)
 
     def _same_origin(self, request: Request) -> bool:
+        """True if a form post came from this gateway's own pages.
+
+        Browsers say where a request came from in ``Sec-Fetch-Site``, and that is trusted when
+        present. The ``Origin`` header cannot be relied on alone: with a ``no-referrer`` policy,
+        which these pages use, browsers send ``Origin: null`` even for a same-origin post. Only
+        browsers too old to send ``Sec-Fetch-Site`` fall back to checking ``Origin``.
+        """
         site = request.headers.get("sec-fetch-site")
-        if site is not None and site not in ("same-origin", "none"):
-            return False
+        if site is not None:
+            return site in ("same-origin", "none")
         origin = request.headers.get("origin")
         return origin is None or origin == self.settings.apex_origin
 

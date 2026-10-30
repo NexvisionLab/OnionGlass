@@ -198,6 +198,23 @@ def test_the_entry_form_refuses_requests_from_other_sites() -> None:
     )
 
 
+def test_browsers_that_send_a_null_origin_for_same_origin_posts_are_accepted() -> None:
+    # Found in a real browser: with a no-referrer policy, Chrome sends "Origin: null" on a
+    # same-origin form post. The Sec-Fetch-Site header is the reliable signal.
+    env = Env()
+    same = {"origin": "null", "sec-fetch-site": "same-origin"}
+    assert env.client.post("/open", data={"address": PAGE}, headers=same).status_code == 303
+    assert (
+        env.client.post("/open", data={"address": PAGE}, headers={"origin": "null"}).status_code
+        == 403
+    )
+    cross = {"origin": "null", "sec-fetch-site": "cross-site"}
+    assert env.client.post("/open", data={"address": PAGE}, headers=cross).status_code == 403
+    # A forged Origin cannot override the browser's own statement of where the request came from.
+    forged = {"origin": f"http://{APEX}", "sec-fetch-site": "cross-site"}
+    assert env.client.post("/open", data={"address": PAGE}, headers=forged).status_code == 403
+
+
 def test_oversized_and_wrong_methods_on_the_entry_form() -> None:
     env = Env()
     assert (

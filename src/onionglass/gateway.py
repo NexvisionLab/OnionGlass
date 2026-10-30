@@ -52,6 +52,7 @@ from onionglass.labels import LabelBook, LabelError, is_valid_label, is_valid_se
 from onionglass.mapper import PlaceholderMapper
 from onionglass.onion import InvalidOnionError, OnionHost, OnionOrigin, OnionUrl, parse_onion_url
 from onionglass.policy import Decision, PolicyRequest
+from onionglass.reports import CATEGORIES, ReportError
 from onionglass.rewrite.css import CssError, CssOptions, sanitize_stylesheet, verify_stylesheet
 from onionglass.rewrite.html import HtmlOptions, RewriteError, decode_document, rewrite_html
 from onionglass.rewrite.urls import resolve_reference
@@ -503,6 +504,8 @@ class Gateway:
             return await self._viewer(request)
         if path == "/_og/current" and method == "GET":
             return await self._current_page(request)
+        if path == "/_og/report" and method == "POST" and self.settings.reports is not None:
+            return await self._report(request)
         if path == "/_og/viewer.js" and method == "GET":
             return self._viewer_script()
         if path == "/_og/blocked":
@@ -645,7 +648,8 @@ class Gateway:
             return self._error("forbidden", apex=True)
         path_only, _, query = path.partition("?")
         source = self._gateway_url(label, path_only, query)
-        return Response(pages.viewer_page(source), 200, viewer_headers(self.settings.header_policy))
+        page = pages.viewer_page(source, can_report=self.settings.reports is not None)
+        return Response(page, 200, viewer_headers(self.settings.header_policy))
 
     def _viewer_script(self) -> Response:
         headers = resource_headers(self.settings.header_policy, "text/javascript; charset=utf-8")
@@ -656,6 +660,46 @@ class Gateway:
     ) -> None:
         record = json.dumps({"url": page_url.url, "frame": frame_url, "title": title})
         await self.store.put(f"cur:{session_id}", record, self.settings.session_ttl)
+
+    def _json(self, status: int, message: str) -> Response:
+        headers = apex_headers(self.settings.header_policy)
+        headers["Content-Type"] = "application/json"
+        return Response(json.dumps({"message": message}).encode("utf-8"), status, headers)
+
+    async def _report(self, request: Request) -> Response:
+        """A visitor reports the site they are looking at, with one reason from a short list."""
+        queue = self.settings.reports
+        if queue is None or not self._same_origin(request):
+            return self._json(403, "Not allowed.")
+        session_id = await self._current_session(request)
+        if session_id is None:
+            return self._json(403, "Sign in first.")
+        raw = await self._read_body(request, 1024)
+        if raw is None:
+            return self._json(413, "That request is too large.")
+        fields = parse_qs(raw.decode("ascii", errors="ignore"), max_num_fields=5)
+        category = (fields.get("category") or [""])[0]
+        if category not in CATEGORIES:
+            return self._json(400, "Choose a reason from the list.")
+        try:
+            shown = json.loads(await self.store.get(f"cur:{session_id}") or "{}")
+            origin = parse_onion_url(str(shown["url"])).origin
+        except (ValueError, KeyError, TypeError, InvalidOnionError):
+            return self._json(400, "There is no page to report yet.")
+        counter = f"rep:{session_id}"
+        sent = int(await self.store.get(counter) or 0)
+        if sent >= self.settings.max_reports_per_session:
+            return self._json(429, "You have sent as many reports as are allowed for now.")
+        who = await self._who_of(session_id)
+        try:
+            outcome = await queue.submit(origin.host.address, category, who.subject)
+        except ReportError:
+            _log.warning("a report could not be recorded")
+            return self._json(503, "The report could not be recorded. Try again later.")
+        if outcome == "received":
+            await self.store.put(counter, str(sent + 1), 86_400)
+            await self._record("report", who, origin, "report", rule=category)
+        return self._json(200, pages.REPORT_MESSAGES[outcome])
 
     async def _current_page(self, request: Request) -> Response:
         headers = apex_headers(self.settings.header_policy)

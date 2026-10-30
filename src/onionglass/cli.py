@@ -18,6 +18,7 @@ from onionglass.killswitch import KillSwitch
 from onionglass.namegate import load_name_gate
 from onionglass.pages import OPERATOR_NOTICE
 from onionglass.policy import PolicyConfigError, StaticPolicy, load_address_list
+from onionglass.reports import ReportError, ReportQueue
 from onionglass.settings import Profile, Settings
 from onionglass.upstream import TorConfig, TorFetcher
 
@@ -42,6 +43,8 @@ def build_gateway(  # noqa: PLR0913
     rated_list: Path | None = None,
     name_list: Path | None = None,
     held_file: Path | None = None,
+    report_file: Path | None = None,
+    hold_after: int | None = None,
 ) -> Gateway:
     """A personal-mode gateway: reachable only from this machine, no sign-in needed.
 
@@ -56,6 +59,15 @@ def build_gateway(  # noqa: PLR0913
         )
     if name_list is not None and held_file is None:
         raise PolicyConfigError("--name-list needs --held-file, or it could only refuse once")
+    held = HeldList(held_file) if held_file is not None else None
+    reports = None
+    if report_file is not None:
+        try:
+            reports = ReportQueue(report_file, held=held, hold_after=hold_after)
+        except (ReportError, ValueError) as exc:
+            raise PolicyConfigError(str(exc)) from exc
+    elif hold_after is not None:
+        raise PolicyConfigError("--hold-after needs --report-file")
     settings = Settings(
         base_domain="localhost",
         scheme="http",
@@ -67,7 +79,8 @@ def build_gateway(  # noqa: PLR0913
         audit=JsonLinesAudit(audit_log, address_form=audit_address)
         if audit_log is not None
         else None,
-        held=HeldList(held_file) if held_file is not None else None,
+        held=held,
+        reports=reports,
         name_gate=load_name_gate(name_list) if name_list is not None else None,
     )
     fetcher = TorFetcher(TorConfig(socks_host=tor_host, socks_ports=tuple(tor_ports)))
@@ -124,6 +137,16 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="file of sites held until reviewed (delete a line to release one)",
     )
+    parser.add_argument(
+        "--report-file",
+        type=Path,
+        help="let visitors report a site, and keep the reports in this file",
+    )
+    parser.add_argument(
+        "--hold-after",
+        type=int,
+        help="hold a site once this many different visitors have reported it (needs --held-file)",
+    )
     parser.add_argument("--audit-log", type=Path, help="append an audit line for every request")
     parser.add_argument(
         "--audit-address",
@@ -162,6 +185,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             rated_list=args.rated_list,
             name_list=args.name_list,
             held_file=args.held_file,
+            report_file=args.report_file,
+            hold_after=args.hold_after,
         )
     except PolicyConfigError as exc:
         print(f"onionglass: {exc}", file=sys.stderr)

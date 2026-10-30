@@ -14,6 +14,7 @@ from onionglass.killswitch import KillSwitch
 from onionglass.namegate import NameGate
 from onionglass.policy import Policy
 from onionglass.quota import QuotaMeter
+from onionglass.reports import ReportQueue
 from onionglass.tickets import KeyRing
 
 _COOKIE_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
@@ -100,6 +101,8 @@ class Settings:
     audit: AuditSink | None = None
     quota: QuotaMeter | None = None
     held: HeldList | None = None
+    reports: ReportQueue | None = None
+    max_reports_per_session: int = 10
     name_gate: NameGate | None = None
     hook_timeout: float = 2.0
 

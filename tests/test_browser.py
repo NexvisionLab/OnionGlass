@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -24,6 +25,7 @@ from playwright.sync_api import Browser, Frame, Page, expect, sync_playwright
 
 from helpers import TOR_PROJECT
 from onionglass.gateway import Gateway
+from onionglass.reports import ReportQueue
 from onionglass.settings import Profile, Settings
 from onionglass.upstream import Fetcher, UpstreamRequest, UpstreamResponse
 
@@ -152,7 +154,10 @@ class Running:
 
 @contextmanager
 def running_gateway(
-    *, allow_images: bool, site: Callable[[str], Fetcher] | None = None
+    *,
+    allow_images: bool,
+    site: Callable[[str], Fetcher] | None = None,
+    reports: ReportQueue | None = None,
 ) -> Iterator[Running]:
     with leak_detector() as detector:
         port = free_port()
@@ -162,6 +167,7 @@ def running_gateway(
             port=port,
             open_mode=True,
             profile=Profile(allow_images=allow_images),
+            reports=reports,
         )
         leak = f"http://127.0.0.1:{detector.port}"
         gateway = Gateway(settings, fetcher=(site or HostileOnion)(leak))
@@ -326,5 +332,25 @@ def test_the_entry_form_refuses_a_bad_address_in_the_browser(browser: Browser) -
         page.get_by_label("Onion address").fill("example.org")
         page.get_by_role("button", name="Open").click()
         expect(page.get_by_text("not a valid version 3 onion address")).to_be_visible()
+        assert running.detector.hits == []
+        context.close()
+
+
+def test_the_report_button_works_under_the_viewers_policy(browser: Browser, tmp_path: Path) -> None:
+    queue = ReportQueue(tmp_path / "reports.log")
+    with running_gateway(allow_images=False, reports=queue) as running:
+        context = browser.new_context()
+        page = context.new_page()
+        page.set_default_timeout(15_000)
+        open_in_viewer(page, running, f"{TOR_PROJECT}.onion")
+        page.frame_locator("#frame").get_by_role("heading", name="Hostile page").wait_for()
+        expect(page.locator("#address")).to_have_text(f"http://{TOR_PROJECT}.onion/")
+        page.locator("#report-category").select_option("harmful")
+        page.get_by_role("button", name="Report this site").click()
+        expect(page.locator("#report-status")).to_have_text(re.compile("Thank you"))
+        page.get_by_role("button", name="Report this site").click()
+        expect(page.locator("#report-status")).to_have_text(re.compile("already reported"))
+        lines = (tmp_path / "reports.log").read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1 and TOR_PROJECT in lines[0] and "harmful" in lines[0]
         assert running.detector.hits == []
         context.close()

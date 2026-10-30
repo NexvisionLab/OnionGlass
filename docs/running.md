@@ -100,6 +100,16 @@ With `--rated-list FILE` (one onion address per line), the sites on the list are
 - Each line in the held file has the address, the time and the reason, so the file is also the queue of sites waiting for review. If the file cannot be read or understood, every site is held, as with the kill file.
 - The project ships no list and the repository never holds one. What belongs on it is a legal and operational decision for you to take.
 
+### Reports from visitors
+
+With `--report-file FILE`, the viewer shows a "Report this site" button next to a short list of reasons: illegal content, harmful content, scam or fraud, or something else. There is no free text, so the queue never holds other people's personal details or anything harmful to read.
+
+- The report names the site the server says the visitor is looking at, never an address the browser supplies.
+- Each line in the file holds the time, the onion address, the reason and the reporter's subject from their ticket. No page content is stored.
+- A visitor can report a site once, and a session can send ten reports (`max_reports_per_session`). A repeated report does not use up the limit.
+- With `--hold-after N` (and `--held-file`), a site that N different visitors have reported is held, so nobody can open it until a person has looked and removed its line from the held file.
+- If the file cannot be written, the visitor is told the report was not recorded.
+
 ### The kill file
 
 Create the file to stop serving, delete it or empty it to start again. The gateway looks at it about once a second and does not need a restart. One scope per line:

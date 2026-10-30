@@ -12,13 +12,13 @@ Status: draft template. This is not legal advice. Reporting duties, retention ru
 ## Triggers
 
 - The name check flags an address or a page title.
-- A visitor uses the "report this site" button.
+- A visitor uses the "report this site" button. The report file holds the time, the address, one reason from a fixed list and the reporter's subject, and nothing from the page.
 - A third party sends a takedown or abuse complaint.
 - An operator or reviewer comes across something while working.
 
 ## Steps
 
-1. **Block first.** Add the onion to the blocklist. This stops everyone from opening it, and takes effect without waiting for review.
+1. **Block first.** Add the onion to the blocklist. This stops everyone from opening it, and takes effect without waiting for review. A site that the name check or enough visitor reports has already put on the held list is not served either, and its line in the held file is the record of when and why.
 2. **Do not view more than you must.** The default viewer withholds images, so a reviewer normally sees a placeholder, not the image. Do not reveal images from a flagged site to confirm it. Do not download files from it.
 3. **Do not copy or forward the material.** That includes screenshots, saved pages and evidence captures. Delete any capture that already holds it, according to the law that applies to you, and record that you did.
 4. **Record only what is needed.** Keep the onion address, the time, who reported it, what triggered the flag, and what action was taken. Do not record the content.

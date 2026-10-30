@@ -6,6 +6,8 @@ from __future__ import annotations
 import html
 from urllib.parse import urlsplit
 
+from onionglass.reports import CATEGORIES
+
 OPERATOR_NOTICE = (
     "The person running this gateway can see every address you open and everything you view "
     "through it. It does not make you anonymous. If you need that, use Tor Browser."
@@ -274,6 +276,29 @@ VIEWER_SCRIPT = """(function () {
   document.getElementById("reload").addEventListener("click", function () {
     frame.src = frameUrl;
   });
+  var reportButton = document.getElementById("report");
+  if (reportButton) {
+    var category = document.getElementById("report-category");
+    var status = document.getElementById("report-status");
+    reportButton.addEventListener("click", function () {
+      reportButton.disabled = true;
+      status.textContent = "Sending...";
+      fetch("/_og/report", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "category=" + encodeURIComponent(category.value)
+      })
+        .then(function (response) {
+          return response.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          status.textContent = (data && data.message) || "The report could not be sent.";
+        })
+        .catch(function () { status.textContent = "The report could not be sent."; })
+        .then(function () { reportButton.disabled = false; });
+    });
+  }
   update();
   window.setInterval(update, 1500);
 })();
@@ -291,8 +316,33 @@ _VIEWER_STYLE = (
 )
 
 
-def viewer_page(frame_src: str) -> bytes:
+REPORT_LABELS = {
+    "illegal": "Illegal content",
+    "harmful": "Harmful content",
+    "scam": "Scam or fraud",
+    "other": "Something else",
+}
+REPORT_MESSAGES = {
+    "received": "Thank you. The operator has your report.",
+    "duplicate": "You have already reported this site.",
+}
+
+
+def _report_controls() -> str:
+    options = "".join(
+        f'<option value="{html.escape(name)}">{html.escape(REPORT_LABELS[name])}</option>'
+        for name in CATEGORIES
+    )
+    return (
+        f'<select id="report-category" aria-label="Reason for the report">{options}</select>'
+        '<button id="report" type="button">Report this site</button>'
+        '<output id="report-status" aria-live="polite"></output>'
+    )
+
+
+def viewer_page(frame_src: str, *, can_report: bool = False) -> bytes:
     """The page that frames an onion site, with the real address shown above it."""
+    controls = _report_controls() if can_report else ""
     document = (
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -303,7 +353,7 @@ def viewer_page(frame_src: str) -> bytes:
         '<output id="address" aria-label="Address of the page you are viewing">Loading...</output>'
         '<button id="copy" type="button">Copy address</button>'
         '<button id="reload" type="button">Reload</button>'
-        '<a href="/">Open another address</a></div>'
+        f'{controls}<a href="/">Open another address</a></div>'
         f'<iframe id="frame" title="Page from the onion site" src="{html.escape(frame_src)}" '
         'sandbox="allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox" '
         'referrerpolicy="no-referrer"></iframe>'

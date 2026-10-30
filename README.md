@@ -1,4 +1,4 @@
-# onionglass
+# OnionGlass
 
 A self-hostable gateway that lets you open `.onion` sites in an ordinary browser, safely, and capture what you see as evidence.
 

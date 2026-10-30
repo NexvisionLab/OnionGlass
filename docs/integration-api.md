@@ -95,7 +95,42 @@ settings = Settings(
 
 ## Ticket
 
-A ticket is a signed, short-lived, single-use token. Planned claims: subject, group, profile, issued-at, expiry, a unique identifier, and the onion to open. The gateway holds only public keys, so a stolen gateway cannot issue tickets. Keys carry identifiers so they can be rotated without downtime.
+A ticket is how your sign-in service tells the gateway who is arriving. It is signed, short-lived and single-use. The gateway holds only public keys, so a stolen gateway cannot sign anyone in. Visitors arrive by opening `https://<gateway>/enter?t=<ticket>`, which signs them in and sends them on, to the entry page or straight to one onion site if the ticket names one.
+
+### Format
+
+```
+og1.<key id>.<payload>.<signature>
+```
+
+- **`og1`** is the format name and version.
+- **Key id** is 1 to 32 characters from letters, digits, `-` and `_`. It names which public key checks the signature, so keys can be rotated without downtime.
+- **Payload** is a JSON object in UTF-8, encoded as base64url without padding.
+- **Signature** is an Ed25519 signature, encoded the same way. It covers, in order: the text `onionglass ticket v1`, a zero byte, the key id as ASCII, a zero byte, and the payload bytes exactly as they were encoded, not re-written.
+- Both encoded parts must be canonical: no padding, no characters outside the base64url set, and nothing that decodes and encodes back to something different. The whole ticket is ASCII and at most 4096 characters.
+
+### Claims
+
+All of these are required except `onion`. Any other claim, a missing one, or a repeated name makes the ticket invalid. Text claims are printable ASCII with no spaces.
+
+| Claim | Meaning | Rule |
+|---|---|---|
+| `sub` | who the visitor is, as your service knows them | text, 1 to 256 characters |
+| `grp` | the group they belong to | text, 1 to 128 characters |
+| `prf` | the profile they get | text, 1 to 128 characters, and the gateway must have a profile of that name or the ticket is refused |
+| `jti` | a unique id for this ticket | text, 16 to 64 characters, never reused |
+| `iat` | when it was issued | whole seconds since the epoch, from 0 to 4102444800, not a fraction and not true or false |
+| `exp` | when it stops working | the same, later than `iat` by at most 300 seconds |
+| `aud` | which gateway it is for | text, equal to the audience in that gateway's settings |
+| `onion` | open this site on arrival | optional, the 56-character address without `.onion` |
+
+The gateway accepts a ticket from 30 seconds before `iat` until 30 seconds after `exp` (not including that last moment), to allow for clocks that differ a little. It remembers each `jti` until the ticket has expired, so a second use fails. The record is kept in the gateway's memory, so with more than one gateway process behind one address a ticket could be used once on each, and the sign-in service should keep tickets as short as it can.
+
+`sub` is what the audit log and the daily allowance use to tell visitors apart. Make it a stable, opaque id for the account, not an address or a name you would not want in a log.
+
+### Keys
+
+The sign-in service keeps the private key. The gateway's settings list the public keys it trusts, each with its key id. `onionglass keys generate` makes a pair, and `onionglass ticket` makes one ticket for testing a deployment. To rotate, add the new public key beside the old one, switch the service to the new private key, wait for the old tickets to expire, then remove the old public key.
 
 ## What is deliberately not in the API
 

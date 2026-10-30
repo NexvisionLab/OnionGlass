@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from onionglass.audit import AuditSink
 from onionglass.headers import HeaderPolicy
+from onionglass.held import HeldList
 from onionglass.hosts import GatewayHosts
 from onionglass.killswitch import KillSwitch
+from onionglass.namegate import NameGate
 from onionglass.policy import Policy
 from onionglass.quota import QuotaMeter
 from onionglass.tickets import KeyRing
@@ -47,6 +49,17 @@ class Profile:
                 raise ValueError("the daily quota must be at least 1")
             if self.open_cost == 0 and self.page_cost == 0:
                 raise ValueError("a daily quota needs a cost, or nothing ever uses it up")
+
+    def text_only(self) -> Profile:
+        """This profile with everything risky turned off, for sites nobody has rated."""
+        return replace(
+            self,
+            allow_images=False,
+            allow_fonts=False,
+            allow_post_forms=False,
+            allow_uploads=False,
+            allow_password_fields=False,
+        )
 
     @classmethod
     def restricted(cls) -> Profile:
@@ -86,6 +99,8 @@ class Settings:
     kill: KillSwitch | None = None
     audit: AuditSink | None = None
     quota: QuotaMeter | None = None
+    held: HeldList | None = None
+    name_gate: NameGate | None = None
     hook_timeout: float = 2.0
 
     def profile_named(self, name: str) -> Profile | None:
@@ -95,6 +110,8 @@ class Settings:
         return self.profiles.get(name)
 
     def __post_init__(self) -> None:
+        if self.name_gate is not None and self.held is None:
+            raise ValueError("a name gate needs a held list, or it could only refuse once")
         if self.quota is None and any(
             p.daily_quota is not None for p in (self.profile, *self.profiles.values())
         ):

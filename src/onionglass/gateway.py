@@ -68,6 +68,15 @@ class _TooBusyError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class _Verdict:
+    """What screening decided: an error kind if refused, else whether to show text only."""
+
+    refusal: str | None = None
+    text_only: bool = False
+    rule: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class _Who:
     """The visitor as the sign-in service described them. Never a network address."""
 
@@ -276,39 +285,49 @@ class Gateway:
             return False
         return True
 
-    async def _refusal(
-        self, who: _Who, profile: Profile, origin: OnionOrigin, action: str, path: str
-    ) -> str | None:
-        """The error kind that stops this request, or None if it may go ahead.
-
-        Order matters: the kill switch is the cheapest and the surest, then the policy, and last
-        the audit record, which must be written before the request goes out.
-        """
+    async def _screen(self, who: _Who, origin: OnionOrigin, action: str, path: str) -> _Verdict:
+        """The kill switch, the held list and the policy, in that order. Records every refusal."""
         settings = self.settings
+        address = origin.host.address
         if settings.kill is not None:
-            scope = settings.kill.engaged(profile=who.profile, address=origin.host.address)
+            scope = settings.kill.engaged(profile=who.profile, address=address)
             if scope is not None:
                 await self._record("refused", who, origin, action, rule=f"kill:{scope}", path=path)
-                return "paused"
-        rule = ""
-        if settings.policy is not None:
-            request = PolicyRequest(origin, who.profile, who.group, who.subject, action)
-            try:
-                decision = await asyncio.wait_for(
-                    settings.policy.decide(request), timeout=settings.hook_timeout
-                )
-                if not isinstance(decision, Decision):
-                    raise TypeError("a policy must return a Decision")
-            except Exception:
-                _log.warning("the policy could not decide, so the request was refused")
-                await self._record(
-                    "refused", who, origin, action, rule="policy-unavailable", path=path
-                )
-                return "policy_unavailable"
-            if not decision.allowed:
-                await self._record("refused", who, origin, action, rule=decision.rule, path=path)
-                return "denied"
-            rule = decision.rule
+                return _Verdict("paused")
+        if settings.held is not None:
+            reason = settings.held.reason_for(address)
+            if reason is not None:
+                await self._record("refused", who, origin, action, rule=reason, path=path)
+                return _Verdict("denied")
+        if settings.policy is None:
+            return _Verdict()
+        request = PolicyRequest(origin, who.profile, who.group, who.subject, action)
+        try:
+            decision = await asyncio.wait_for(
+                settings.policy.decide(request), timeout=settings.hook_timeout
+            )
+            if not isinstance(decision, Decision):
+                raise TypeError("a policy must return a Decision")
+        except Exception:
+            _log.warning("the policy could not decide, so the request was refused")
+            await self._record("refused", who, origin, action, rule="policy-unavailable", path=path)
+            return _Verdict("policy_unavailable")
+        if not decision.allowed:
+            await self._record("refused", who, origin, action, rule=decision.rule, path=path)
+            return _Verdict("denied")
+        return _Verdict(None, decision.text_only, decision.rule)
+
+    async def _refusal(
+        self, who: _Who, profile: Profile, origin: OnionOrigin, action: str, path: str
+    ) -> _Verdict:
+        """Whether this request may go ahead, and if so whether the page is shown as text only.
+
+        Order matters: the cheap and sure checks first, then the allowance, and last the audit
+        record, which must be written before the request goes out.
+        """
+        verdict = await self._screen(who, origin, action, path)
+        if verdict.refusal is not None:
+            return verdict
         cost = profile.open_cost if action == "open" else 0
         # An empty allowance stops opening. It only stops fetching when pages are what is counted,
         # so a visitor who has used their opens can still read the sites they already opened.
@@ -316,13 +335,13 @@ class Gateway:
         exhausted = await self._quota_check(who, profile, cost) if counted else None
         if exhausted is not None:
             await self._record("refused", who, origin, action, rule="quota", path=path)
-            return exhausted
-        if not await self._record("allowed", who, origin, action, rule=rule, path=path):
-            return "audit_unavailable"
+            return _Verdict(exhausted)
+        if not await self._record("allowed", who, origin, action, rule=verdict.rule, path=path):
+            return _Verdict("audit_unavailable")
         if not await self._charge(who, profile, cost):
             await self._record("refused", who, origin, action, rule="quota-unavailable", path=path)
-            return "quota_unavailable"
-        return None
+            return _Verdict("quota_unavailable")
+        return verdict
 
     async def _admit(
         self,
@@ -333,10 +352,12 @@ class Gateway:
         *,
         path: str = "",
         apex: bool = False,
-    ) -> Response | None:
-        """None means go ahead. Anything else is the refusal to send."""
-        kind = await self._refusal(who, profile, origin, action, path)
-        return None if kind is None else self._error(kind, apex=apex)
+    ) -> Response | bool:
+        """The refusal to send, or whether the page is to be shown as text only."""
+        verdict = await self._refusal(who, profile, origin, action, path)
+        if verdict.refusal is not None:
+            return self._error(verdict.refusal, apex=apex)
+        return verdict.text_only
 
     def _take_rate_slot(self, session_id: str, profile: Profile) -> bool:
         """Count a request against the profile's per-minute limit. False means slow down."""
@@ -537,7 +558,7 @@ class Gateway:
         if profile is None:
             return self._error("unknown_profile", apex=True)
         refusal = await self._admit(who, profile, parsed.origin, "open", path=target, apex=True)
-        if refusal is not None:
+        if isinstance(refusal, Response):
             return refusal
         try:
             session_id = existing or await self._create_session(
@@ -576,7 +597,7 @@ class Gateway:
             refusal = await self._admit(
                 who, ticket_profile, ticket_origin, "open", path="/", apex=True
             )
-            if refusal is not None:
+            if isinstance(refusal, Response):
                 return refusal
         try:
             session_id = await self._create_session(claims.subject, claims.group, claims.profile)
@@ -653,14 +674,24 @@ class Gateway:
         origin: OnionOrigin,
         method: str,
         target: str,
-    ) -> Response | None:
-        """What the profile, the rate limit, the kill switch, the policy and the audit log say."""
+    ) -> Response | Profile:
+        """The refusal to send, or the profile that applies to this request.
+
+        That is the session's own profile, or its text-only form for a site nobody has rated.
+        """
         if method == "POST" and not profile.allow_post_forms:
             await self._record("refused", who, origin, "fetch", rule="profile:post", path=target)
             return self._error("not_permitted")
         if not self._take_rate_slot(session_id, profile):
             return self._error("slow_down")
-        return await self._admit(who, profile, origin, "fetch", path=target)
+        admitted = await self._admit(who, profile, origin, "fetch", path=target)
+        if isinstance(admitted, Response):
+            return admitted
+        effective = profile.text_only() if admitted else profile
+        if method == "POST" and not effective.allow_post_forms:
+            await self._record("refused", who, origin, "fetch", rule="unrated:post", path=target)
+            return self._error("not_permitted")
+        return effective
 
     async def _post_body(
         self, request: Request, who: _Who, profile: Profile, origin: OnionOrigin, target: str
@@ -713,9 +744,10 @@ class Gateway:
             )
         except (UnicodeDecodeError, InvalidOnionError):
             return self._error("bad_request")
-        refusal = await self._gate(session_id, who, profile, origin, method, request_target)
-        if refusal is not None:
-            return refusal
+        gated = await self._gate(session_id, who, profile, origin, method, request_target)
+        if isinstance(gated, Response):
+            return gated
+        profile = gated
         body = b""
         if method == "POST":
             posted = await self._post_body(request, who, profile, origin, request_target)
@@ -867,11 +899,31 @@ class Gateway:
             )
         except (RewriteError, TimeoutError):
             return self._error("rewrite_failed")
+        if await self._name_gate_hit(session_id, page_url, result.title, result.headings):
+            return self._error("denied")
         labels = await self._label_map(session_id, mapper)
         text = mapper.substitute(result.body.decode("utf-8"), labels)
         if frame_url is not None and status < 400:
             await self._remember_page(session_id, page_url, frame_url, result.title)
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
+
+    async def _name_gate_hit(
+        self, session_id: str, page_url: OnionUrl, title: str, headings: tuple[str, ...]
+    ) -> bool:
+        """True if the page's title or headings are on the name list. The site is then held."""
+        gate = self.settings.name_gate
+        if gate is None or not gate.check(title, *headings):
+            return False
+        who = await self._who_of(session_id)
+        origin = page_url.origin
+        await self._record("refused", who, origin, "fetch", rule="name-gate", path=page_url.path)
+        held = self.settings.held
+        if held is not None:
+            try:
+                await held.hold(origin.host.address, "name-gate")
+            except Exception:
+                _log.warning("the held list could not be written, the site is held in memory")
+        return True
 
     async def _deliver_css(
         self,

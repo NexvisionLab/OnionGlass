@@ -86,6 +86,20 @@ A profile can carry a daily allowance per account (`daily_quota`). What it count
 
 The check happens just before a request goes out and the charge just after, so a burst of simultaneous requests can overshoot the allowance by about as many requests as are in flight.
 
+### Unrated sites
+
+With `--rated-list FILE` (one onion address per line), the sites on the list are served normally and every other site is unrated. An unrated site can still be opened, but it is shown as text only: no images, fonts, forms, logins or uploads, and a post to it is refused even if sent by hand. Everything else about the visitor's profile still applies. The audit log marks these requests with the rule `unrated`. A blocklist entry always wins over the rated list.
+
+### The name gate and the held list
+
+`--name-list FILE` lists phrases, one per line. When the title or one of the first headings of a page contains a listed phrase, the page is refused and the site is added to the held list. Every later request to that site is refused, for everyone, until a person removes its line from the file given with `--held-file`. The two options go together, because a gate with nowhere to remember its hits could only refuse once.
+
+- A phrase matches whole words, so a word inside a longer, innocent word is not a hit. A single word can end in `*` to match every word that starts with it.
+- Accents, full-width letters, zero-width characters and common look-alike digits and symbols (`4` for `a`, `3` for `e`, and so on) do not hide a word.
+- Only the title and the first few headings are read. The body of a page, images, and a page written in a script or spelling your list does not cover are not checked. The gate is one layer next to the address blocklist and a review, not a substitute for either.
+- Each line in the held file has the address, the time and the reason, so the file is also the queue of sites waiting for review. If the file cannot be read or understood, every site is held, as with the kill file.
+- The project ships no list and the repository never holds one. What belongs on it is a legal and operational decision for you to take.
+
 ### The kill file
 
 Create the file to stop serving, delete it or empty it to start again. The gateway looks at it about once a second and does not need a restart. One scope per line:

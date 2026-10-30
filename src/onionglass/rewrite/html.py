@@ -39,6 +39,7 @@ MAX_DEPTH = 400
 MAX_TEXT_ATTRIBUTE = 1000
 MAX_SHORT_ATTRIBUTE = 200
 MAX_TITLE = 200
+MAX_HEADINGS = 5
 
 # Only encodings that browsers themselves decode. Python knows many more, some of which are not
 # text encodings at all, and a page must not be able to pick one of those.
@@ -202,6 +203,7 @@ class RewriteResult:
     removed_scripts: int
     blocked_forms: int
     refresh_url: str | None
+    headings: tuple[str, ...] = ()
 
 
 def decode_document(data: bytes, declared_charset: str | None = None) -> str:
@@ -248,6 +250,7 @@ class _Emitter:
         self.options = options
         self.out: list[str] = []
         self.title = ""
+        self.headings: list[str] = []
         self.has_password_field = False
         self.withheld_images = 0
         self.external_links = 0
@@ -494,6 +497,8 @@ class _Emitter:
             return False, ""
         if tag == "form":
             return (True, "</form>") if self._open_form(node) else (True, "")
+        if tag in ("h1", "h2") and len(self.headings) < MAX_HEADINGS:
+            self.headings.append(_printable(node.text(), MAX_TITLE).strip())
         if tag not in _ALLOWED_TAGS:
             return True, ""  # unknown element: keep its text, lose the tag
         self.out.append(f"<{tag}")
@@ -641,6 +646,7 @@ def _rewrite_html(
         removed_scripts=emitter.removed_scripts,
         blocked_forms=emitter.blocked_forms,
         refresh_url=emitter.refresh_url,
+        headings=tuple(emitter.headings),
     )
 
 

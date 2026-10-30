@@ -13,7 +13,9 @@ import uvicorn
 
 from onionglass.audit import ADDRESS_FORMS, AddressForm, JsonLinesAudit
 from onionglass.gateway import Gateway
+from onionglass.held import HeldList
 from onionglass.killswitch import KillSwitch
+from onionglass.namegate import load_name_gate
 from onionglass.pages import OPERATOR_NOTICE
 from onionglass.policy import PolicyConfigError, StaticPolicy, load_address_list
 from onionglass.settings import Profile, Settings
@@ -37,17 +39,23 @@ def build_gateway(  # noqa: PLR0913
     kill_file: Path | None = None,
     audit_log: Path | None = None,
     audit_address: AddressForm = "origin",
+    rated_list: Path | None = None,
+    name_list: Path | None = None,
+    held_file: Path | None = None,
 ) -> Gateway:
     """A personal-mode gateway: reachable only from this machine, no sign-in needed.
 
     Raises ``PolicyConfigError`` if a list cannot be read, so a typo never means no list.
     """
     policy = None
-    if blocklist is not None or allowlist is not None:
+    if blocklist is not None or allowlist is not None or rated_list is not None:
         policy = StaticPolicy(
             blocked=load_address_list(blocklist) if blocklist is not None else (),
             allowed=load_address_list(allowlist) if allowlist is not None else None,
+            rated=load_address_list(rated_list) if rated_list is not None else None,
         )
+    if name_list is not None and held_file is None:
+        raise PolicyConfigError("--name-list needs --held-file, or it could only refuse once")
     settings = Settings(
         base_domain="localhost",
         scheme="http",
@@ -59,6 +67,8 @@ def build_gateway(  # noqa: PLR0913
         audit=JsonLinesAudit(audit_log, address_form=audit_address)
         if audit_log is not None
         else None,
+        held=HeldList(held_file) if held_file is not None else None,
+        name_gate=load_name_gate(name_list) if name_list is not None else None,
     )
     fetcher = TorFetcher(TorConfig(socks_host=tor_host, socks_ports=tuple(tor_ports)))
     return Gateway(settings, fetcher=fetcher)
@@ -99,6 +109,21 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="stop serving while this file lists a scope (see docs/running.md)",
     )
+    parser.add_argument(
+        "--rated-list",
+        type=Path,
+        help="file of rated onion addresses; every other address is shown as text only",
+    )
+    parser.add_argument(
+        "--name-list",
+        type=Path,
+        help="file of phrases that hold a site when they appear in a page title or heading",
+    )
+    parser.add_argument(
+        "--held-file",
+        type=Path,
+        help="file of sites held until reviewed (delete a line to release one)",
+    )
     parser.add_argument("--audit-log", type=Path, help="append an audit line for every request")
     parser.add_argument(
         "--audit-address",
@@ -134,6 +159,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             kill_file=args.kill_file,
             audit_log=args.audit_log,
             audit_address=args.audit_address,
+            rated_list=args.rated_list,
+            name_list=args.name_list,
+            held_file=args.held_file,
         )
     except PolicyConfigError as exc:
         print(f"onionglass: {exc}", file=sys.stderr)

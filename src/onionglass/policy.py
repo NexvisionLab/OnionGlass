@@ -44,10 +44,11 @@ class Decision:
 
     allowed: bool
     rule: str = "default"
+    text_only: bool = False  # allowed, but shown without images, forms, logins, files or fonts
 
     @classmethod
-    def allow(cls, rule: str = "default") -> Decision:
-        return cls(True, rule)
+    def allow(cls, rule: str = "default", *, text_only: bool = False) -> Decision:
+        return cls(True, rule, text_only)
 
     @classmethod
     def deny(cls, rule: str) -> Decision:
@@ -104,16 +105,22 @@ def load_address_list(path: str | Path) -> frozenset[str]:
 
 
 class StaticPolicy:
-    """A blocklist, and optionally an allowlist that everything else must be on."""
+    """A blocklist, an optional allowlist, and an optional list of rated addresses.
+
+    With a rated list, an address that is on it is served normally and every other address is
+    unrated: it may be opened but is shown as text only until someone rates it.
+    """
 
     def __init__(
         self,
         *,
         blocked: Iterable[str] = (),
         allowed: Iterable[str] | None = None,
+        rated: Iterable[str] | None = None,
     ) -> None:
         self._blocked = frozenset(address_of(a) for a in blocked)
         self._allowed = None if allowed is None else frozenset(address_of(a) for a in allowed)
+        self._rated = None if rated is None else frozenset(address_of(a) for a in rated)
 
     async def decide(self, request: PolicyRequest) -> Decision:
         address = request.origin.host.address
@@ -121,4 +128,6 @@ class StaticPolicy:
             return Decision.deny("blocklist")
         if self._allowed is not None and address not in self._allowed:
             return Decision.deny("not-on-allowlist")
+        if self._rated is not None and address not in self._rated:
+            return Decision.allow("unrated", text_only=True)
         return Decision.allow("static")

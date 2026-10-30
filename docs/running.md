@@ -53,6 +53,36 @@ Then open `http://localhost:8080/`. The compose file starts three containers:
 
 The container files have not been run by the project's maintainers yet. The continuous-integration job builds both images and checks the compose file, but nobody has watched them start Tor and open a site. Treat them as a starting point and read them first.
 
+## Blocking, stopping and logging
+
+These options work in personal mode and are the same ones a team deployment uses. All of them are off unless you give them.
+
+| Option | What it does |
+|---|---|
+| `--blocklist FILE` | Onion addresses that are never opened. One per line, `#` starts a comment. A sub-domain counts as its whole address. |
+| `--allowlist FILE` | The only addresses that may be opened. The blocklist still wins. |
+| `--kill-file FILE` | Stops serving while the file lists a scope. See below. |
+| `--audit-log FILE` | Appends one JSON line for every request that reaches an onion site. |
+| `--audit-address FORM` | How the audit log names the site: `origin` (default, no path), `full`, `hash` or `none`. |
+
+A list that cannot be read, or that has a line that is not an onion address, stops the program from starting. A typo never means "no list".
+
+### The kill file
+
+Create the file to stop serving, delete it or empty it to start again. The gateway looks at it about once a second and does not need a restart. One scope per line:
+
+```
+all
+profile restricted
+onion <56 character address>
+```
+
+A file that exists but cannot be read, or that has a line the gateway does not understand, stops everything. The health check at `/_og/health` stays up, so a supervisor does not restart a gateway you stopped on purpose.
+
+### The audit log
+
+Each request is written down before it goes out, and its outcome when it comes back. If the log cannot be written, the request is refused. The log holds the time, what happened, which rule decided it, the profile, group and subject, the site in the form you chose, and the status. It never holds page or form bodies, headers or cookies, and the gateway does not keep visitors' network addresses at all. The file is opened for every line and is private to its owner, so moving it away for rotation works. Keep it on a disk with room, because a full disk stops the gateway.
+
 ## What the gateway does and does not do for you
 
 - Pages are shown without scripts.

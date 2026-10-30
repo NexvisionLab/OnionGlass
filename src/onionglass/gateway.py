@@ -23,6 +23,7 @@ import secrets
 import time
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -32,6 +33,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from onionglass import pages
+from onionglass.audit import AuditEvent
 from onionglass.cookies import CookieJar, RequestContext
 from onionglass.decode import DecodeError, decode_body
 from onionglass.headers import (
@@ -48,6 +50,7 @@ from onionglass.headers import (
 from onionglass.labels import LabelBook, LabelError, is_valid_label, is_valid_session_id
 from onionglass.mapper import PlaceholderMapper
 from onionglass.onion import InvalidOnionError, OnionHost, OnionOrigin, OnionUrl, parse_onion_url
+from onionglass.policy import Decision, PolicyRequest
 from onionglass.rewrite.css import CssError, CssOptions, sanitize_stylesheet, verify_stylesheet
 from onionglass.rewrite.html import HtmlOptions, RewriteError, decode_document, rewrite_html
 from onionglass.rewrite.urls import resolve_reference
@@ -61,6 +64,15 @@ _log = logging.getLogger("onionglass")
 
 class _TooBusyError(Exception):
     """Too many new sessions in a short time."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Who:
+    """The visitor as the sign-in service described them. Never a network address."""
+
+    subject: str
+    group: str
+    profile: str
 
 
 _HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
@@ -174,6 +186,102 @@ class Gateway:
         record = json.dumps({"sub": subject, "grp": group, "prf": profile})
         await self.store.put(f"sess:{session_id}", record, self.settings.session_ttl)
         return session_id
+
+    # --- policy, kill switches and the audit log ------------------------------------------
+
+    def _who(self, record: str | None) -> _Who:
+        default = self.settings.profile.name
+        try:
+            data = json.loads(record or "")
+            return _Who(str(data["sub"]), str(data["grp"]), str(data["prf"]))
+        except (ValueError, KeyError, TypeError):
+            return _Who("local", "local", default)
+
+    async def _who_of(self, session_id: str | None) -> _Who:
+        record = await self.store.get(f"sess:{session_id}") if session_id else None
+        return self._who(record)
+
+    async def _record(
+        self,
+        kind: str,
+        who: _Who,
+        origin: OnionOrigin,
+        action: str,
+        *,
+        rule: str = "",
+        path: str = "",
+        status: int | None = None,
+    ) -> bool:
+        """Write an audit event. False means the sink is configured and failed."""
+        sink = self.settings.audit
+        if sink is None:
+            return True
+        event = AuditEvent(
+            kind=kind,
+            action=action,
+            rule=rule,
+            profile=who.profile,
+            group=who.group,
+            subject=who.subject,
+            origin=origin.key,
+            path=path,
+            status=status,
+            time=time.time(),
+        )
+        try:
+            await asyncio.wait_for(sink.write(event), timeout=self.settings.hook_timeout)
+        except Exception:
+            _log.warning("the audit log could not be written")
+            return False
+        return True
+
+    async def _refusal(self, who: _Who, origin: OnionOrigin, action: str, path: str) -> str | None:
+        """The error kind that stops this request, or None if it may go ahead.
+
+        Order matters: the kill switch is the cheapest and the surest, then the policy, and last
+        the audit record, which must be written before the request goes out.
+        """
+        settings = self.settings
+        if settings.kill is not None:
+            scope = settings.kill.engaged(profile=who.profile, address=origin.host.address)
+            if scope is not None:
+                await self._record("refused", who, origin, action, rule=f"kill:{scope}", path=path)
+                return "paused"
+        rule = ""
+        if settings.policy is not None:
+            request = PolicyRequest(origin, who.profile, who.group, who.subject, action)
+            try:
+                decision = await asyncio.wait_for(
+                    settings.policy.decide(request), timeout=settings.hook_timeout
+                )
+                if not isinstance(decision, Decision):
+                    raise TypeError("a policy must return a Decision")
+            except Exception:
+                _log.warning("the policy could not decide, so the request was refused")
+                await self._record(
+                    "refused", who, origin, action, rule="policy-unavailable", path=path
+                )
+                return "policy_unavailable"
+            if not decision.allowed:
+                await self._record("refused", who, origin, action, rule=decision.rule, path=path)
+                return "denied"
+            rule = decision.rule
+        if not await self._record("allowed", who, origin, action, rule=rule, path=path):
+            return "audit_unavailable"
+        return None
+
+    async def _admit(
+        self,
+        who: _Who,
+        origin: OnionOrigin,
+        action: str,
+        *,
+        path: str = "",
+        apex: bool = False,
+    ) -> Response | None:
+        """None means go ahead. Anything else is the refusal to send."""
+        kind = await self._refusal(who, origin, action, path)
+        return None if kind is None else self._error(kind, apex=apex)
 
     async def _current_session(self, request: Request) -> str | None:
         value = request.cookies.get(self.settings.cookie_name)
@@ -351,6 +459,11 @@ class Gateway:
         if parsed is None:
             body = pages.landing_page(notice="That is not a valid version 3 onion address.")
             return self._apex(body, 400, form=True)
+        who = await self._who_of(existing)
+        target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        refusal = await self._admit(who, parsed.origin, "open", path=target, apex=True)
+        if refusal is not None:
+            return refusal
         try:
             session_id = existing or await self._create_session(
                 "local", "local", self.settings.profile.name
@@ -376,13 +489,21 @@ class Gateway:
         except TicketError as exc:
             _log.info("ticket refused: %s", exc.reason)
             return self._error("forbidden", apex=True)
+        ticket_origin = (
+            OnionOrigin("http", OnionHost(claims.onion), 80) if claims.onion is not None else None
+        )
+        if ticket_origin is not None:
+            who = _Who(claims.subject, claims.group, claims.profile)
+            refusal = await self._admit(who, ticket_origin, "open", path="/", apex=True)
+            if refusal is not None:
+                return refusal
         try:
             session_id = await self._create_session(claims.subject, claims.group, claims.profile)
         except _TooBusyError:
             return self._error("busy", apex=True)
         location = f"{self.settings.apex_origin}/"
-        if claims.onion is not None:
-            origin = OnionOrigin("http", OnionHost(claims.onion), 80)
+        if ticket_origin is not None:
+            origin = ticket_origin
             try:
                 location = self._viewer_url(
                     await self.labels.label_for(session_id, origin, reserved=True), "/", ""
@@ -451,8 +572,10 @@ class Gateway:
         if target is None:
             return self._error("not_found")
         session_id, origin = target.session_id, target.origin
-        if not await self.store.get(f"sess:{session_id}"):
+        session_record = await self.store.get(f"sess:{session_id}")
+        if not session_record:
             return self._error("expired_session")
+        who = self._who(session_record)
         if settings.require_cookie and request.cookies.get(settings.cookie_name) != session_id:
             return self._error("forbidden")
         method = request.method
@@ -467,6 +590,9 @@ class Gateway:
             )
         except (UnicodeDecodeError, InvalidOnionError):
             return self._error("bad_request")
+        refusal = await self._admit(who, origin, "fetch", path=request_target)
+        if refusal is not None:
+            return refusal
         body = b""
         if method == "POST":
             read = await self._read_body(request, settings.max_request_body)
@@ -506,9 +632,17 @@ class Gateway:
             )
         except UpstreamError as exc:
             _log.info("fetch failed: %s", exc.kind)
+            await self._record("failed", who, origin, "fetch", rule=exc.kind, path=request_target)
             return self._error(exc.kind if exc.kind in pages.ERRORS else "protocol_error")
         finally:
             self._release_fetch_slot(session_id)
+        # The outcome is recorded before anything of the reply is used. If it cannot be recorded
+        # the reply is dropped, cookies included.
+        recorded = await self._record(
+            "response", who, origin, "fetch", path=request_target, status=response.status
+        )
+        if not recorded:
+            return self._error("audit_unavailable")
         await self.jar.store_from_response(
             session_id, origin, request_target, response.header_all("set-cookie")
         )

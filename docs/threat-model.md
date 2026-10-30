@@ -106,10 +106,10 @@ Anonymity of the visitor against the operator, circumventing law enforcement or 
 | P4 nothing identifying reaches the onion site | Covered for requests, for cookies kept on the server, for the multipart boundary and for the session identifier never reaching Tor, and under generated requests | `tests/test_request_fuzz.py`, `tests/test_review_fixes.py`, `tests/test_headers.py`, `tests/test_upstream.py`, `tests/test_cookies.py`, `tests/test_gateway.py` |
 | P5 only valid v3 onion destinations | Covered for parsing, requests and the Tor fetcher | `tests/test_onion.py`, `tests/test_upstream.py`, `tests/test_gateway.py` |
 | P6 withheld images never requested | Covered end to end, and checked by hand in a real browser | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_gateway.py` |
-| P7 fail closed | Partly: rewrite and decode failures refuse. Policy and audit dependencies do not exist yet | `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
-| P8 no bodies or passwords in logs | Partly: nothing identifying is logged on failures. Audit logging does not exist yet | `tests/test_gateway.py` |
+| P7 fail closed | Covered for rewrite and decode failures, and for the policy, the audit log and the kill file: each is failed, hung and given nonsense in turn and the gateway refuses. Evidence capture does not exist yet | `tests/test_policy_ops.py`, `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
+| P8 no bodies or passwords in logs | Covered for the audit log, which holds no bodies, headers or cookies and keeps a hostile subject on one line | `tests/test_policy_ops.py`, `tests/test_gateway.py` |
 | P9 tickets cannot be forged or replayed | Covered | `tests/test_tickets.py` |
-| P10 visitor addresses not logged | Partly: the gateway logs no addresses and access logging is off in personal mode | `tests/test_gateway.py` |
+| P10 visitor addresses not logged | Covered: the gateway keeps no visitor addresses, and the audit log names the onion site only in the form the operator chose (`origin`, `full`, `hash` or `none`) | `tests/test_policy_ops.py`, `tests/test_gateway.py` |
 | P11 onion address absent from host names | Covered for label generation and mapping, and checked in a real browser | `tests/test_labels.py`, `tests/test_hosts.py`, `tests/test_gateway.py` |
 
 ## 9. Checked by hand in a real browser

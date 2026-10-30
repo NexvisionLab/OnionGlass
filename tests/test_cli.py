@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from helpers import TOR_PROJECT
+from onionglass.audit import JsonLinesAudit
 from onionglass.cli import build_gateway, main, parse_arguments
 
 
@@ -71,3 +75,38 @@ def test_several_tor_ports_can_be_given() -> None:
     assert args.tor_port == [9050, 9052]
     gateway = build_gateway(port=8080, tor_ports=args.tor_port)
     assert gateway.fetcher is not None
+
+
+def test_the_option_files_are_wired_into_the_gateway(tmp_path: Path) -> None:
+    blocklist = tmp_path / "blocked.txt"
+    blocklist.write_text(f"{TOR_PROJECT}\n", encoding="utf-8")
+    gateway = build_gateway(
+        port=9000,
+        blocklist=blocklist,
+        kill_file=tmp_path / "kill",
+        audit_log=tmp_path / "audit.log",
+        audit_address="hash",
+    )
+    assert gateway.settings.policy is not None
+    assert gateway.settings.kill is not None
+    assert isinstance(gateway.settings.audit, JsonLinesAudit)
+    plain = build_gateway(port=9000)
+    assert plain.settings.policy is None and plain.settings.kill is None
+    assert plain.settings.audit is None
+
+
+def test_a_list_that_cannot_be_read_stops_start_up_instead_of_being_ignored(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--blocklist", str(tmp_path / "missing.txt")]) == 2
+    assert "cannot read" in capsys.readouterr().err
+    bad = tmp_path / "bad.txt"
+    bad.write_text("not an address\n", encoding="utf-8")
+    assert main(["--allowlist", str(bad)]) == 2
+    assert "line 1" in capsys.readouterr().err
+
+
+def test_the_option_files_have_no_defaults() -> None:
+    args = parse_arguments([])
+    assert args.blocklist is None and args.allowlist is None
+    assert args.kill_file is None and args.audit_log is None and args.audit_address == "origin"

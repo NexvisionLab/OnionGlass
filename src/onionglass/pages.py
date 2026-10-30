@@ -152,6 +152,27 @@ ERRORS: dict[str, tuple[int, str, str]] = {
         "Too many sites",
         "This session has opened as many different onion sites as it is allowed. Start again.",
     ),
+    "denied": (
+        403,
+        "Not available here",
+        "This service does not open that address.",
+    ),
+    "paused": (
+        503,
+        "Paused",
+        "This service is paused. Try again later.",
+    ),
+    "policy_unavailable": (
+        503,
+        "Could not check this address",
+        "The service could not check whether this address may be opened, so it did not open it. "
+        "Try again later.",
+    ),
+    "audit_unavailable": (
+        503,
+        "Cannot record this request",
+        "The service could not record this request, so it did not carry it out. Try again later.",
+    ),
     "internal": (500, "Something went wrong", "The gateway hit an unexpected problem."),
 }
 

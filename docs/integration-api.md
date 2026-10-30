@@ -26,6 +26,12 @@ Status: draft, no stable version. The shapes below will change before version 1.
 | Discovery event | Gateway calls out | An unknown onion was opened | Off | Event is dropped |
 | Watch event | Gateway calls out | A visitor asked to watch an onion | Off | Event is dropped |
 
+## Policy and audit in the code today
+
+The policy and audit hooks exist as Python interfaces, `Policy` and `AuditSink`, and the gateway takes them in its settings. The HTTP form described above is not built yet. The built-in `StaticPolicy` (blocklist and allowlist), `JsonLinesAudit` (a file) and the kill file work now.
+
+A policy receives who is asking (profile, group, subject), the onion origin and whether this is an `open` or a `fetch`, and returns a decision with the name of the rule that made it. It is never told the visitor's network address. Before every request the gateway checks, in this order, the kill switch, the policy, and then writes the audit record. If the policy raises, takes longer than the hook timeout (2 seconds by default) or answers with anything but a decision, the request is refused. If the audit record cannot be written, the request is refused. After the reply arrives its outcome is recorded, and if that fails the reply is dropped.
+
 ## Ticket
 
 A ticket is a signed, short-lived, single-use token. Planned claims: subject, group, profile, issued-at, expiry, a unique identifier, and the onion to open. The gateway holds only public keys, so a stolen gateway cannot issue tickets. Keys carry identifiers so they can be rotated without downtime.

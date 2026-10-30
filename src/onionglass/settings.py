@@ -5,8 +5,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from onionglass.audit import AuditSink
 from onionglass.headers import HeaderPolicy
 from onionglass.hosts import GatewayHosts
+from onionglass.killswitch import KillSwitch
+from onionglass.policy import Policy
 from onionglass.tickets import KeyRing
 
 _COOKIE_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
@@ -44,6 +47,10 @@ class Settings:
     max_fetches_per_session: int = 6
     keys: KeyRing | None = None
     open_mode: bool = False
+    policy: Policy | None = None
+    kill: KillSwitch | None = None
+    audit: AuditSink | None = None
+    hook_timeout: float = 2.0
 
     def __post_init__(self) -> None:
         if self.scheme not in ("http", "https"):

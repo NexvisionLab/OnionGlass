@@ -1,0 +1,135 @@
+# Deploying onionglass for other people
+
+This is the step-by-step for the bundle in `deploy/team`. It sets up a gateway on its own server, with two Tor processes, a proxy that gets a wildcard certificate by itself, and the safety settings from [running.md](running.md).
+
+Read [operator-responsibilities.md](operator-responsibilities.md) and [abuse-procedure.md](abuse-procedure.md) before you open this to anyone. Running a gateway for other people is a legal and operational responsibility, and the software cannot take it from you.
+
+**Status.** The bundle has been checked for structure by the tests and has not been started, because Docker was not available where it was written. Bring it up on a test machine and a test domain first, and expect to find things.
+
+## What you need
+
+- A server you control, with Docker and the Compose plugin. About 2 vCPU and 4 GB is enough to start, and more if you add Tor processes or many visitors.
+- A domain whose DNS is hosted at Cloudflare. A wildcard certificate can only be proved by DNS, and Cloudflare is the provider the proxy image is built for. The domain can stay registered anywhere. Only its nameservers move.
+- Whatever signs your visitors in. It makes a short-lived ticket for each visit and signs it with a private key. This repository gives you the key tools and a test command, not a sign-in service.
+- A decision on the free allowance, if you have a free profile (see "Daily allowances" in running.md).
+
+## 1. Harden the server first
+
+Do this before anything else is installed, and never skip it for a quick test on a machine that has a public address.
+
+- Log in with keys only. Turn off password logins and root login over SSH.
+- Allow only SSH, 80 and 443 through the firewall. Limit SSH to your own addresses if you can. Docker publishes ports around some firewalls, so check from outside with a port scanner after you start.
+- Turn on automatic security updates, and a tool that blocks repeated failed logins.
+- Put nothing else on the machine. The gateway shows pages from the dark web to its visitors, and a neighbour on the same box is a neighbour at risk.
+- Install Docker from Docker's own package repository, and run the stack as a normal user in the `docker` group.
+
+## 2. DNS
+
+In Cloudflare, add the domain and change the nameservers at the registrar as it tells you. Then add:
+
+| Type | Name | Value | Proxy |
+|---|---|---|---|
+| A | `@` (the domain itself) | the server's address | **DNS only** |
+| A | `*` | the server's address | **DNS only** |
+| CAA | `@` | `0 issue "letsencrypt.org"` | |
+| CAA | `@` | `0 issuewild "letsencrypt.org"` | |
+
+Leave the orange cloud off. If Cloudflare proxies the traffic it sees every page, and the gateway's whole point is that only you do.
+
+Add the same records for IPv6 (`AAAA`) if the server has an IPv6 address, and make sure it is reachable, or leave IPv6 out.
+
+Make an API token for the proxy: in Cloudflare, My Profile, API Tokens, create a custom token with the single permission "Zone, DNS, Edit", limited to this one zone. It cannot do anything else.
+
+## 3. The files
+
+```
+git clone https://github.com/NexvisionLab/onionglass.git
+cd onionglass/deploy/team
+cp env.example .env              # set DOMAIN and ACME_EMAIL
+mkdir -p secrets state config/keys config/secrets
+```
+
+Put the DNS token in `secrets/proxy.env` as one line, `CLOUDFLARE_API_TOKEN=` followed by the token, and run `chmod 600 secrets/proxy.env`. Do not paste the token into a chat, a ticket or a shell history that is kept.
+
+Make the sign-in key pair on a machine that has the package installed (the server is fine), then keep the private key with your sign-in service and nowhere else:
+
+```
+onionglass keys generate --id signin-1 --out config/keys
+```
+
+Move `config/keys/signin-1.private.pem` away to wherever your sign-in service keeps its key. Only the public key stays in `config/keys`.
+
+Make the metrics token and keep it out of the repository too:
+
+```
+python3 -c "import secrets; print(secrets.token_urlsafe(32))" > config/secrets/metrics.token
+chmod 600 config/secrets/metrics.token
+```
+
+Edit `config/team.toml`: set the domain, then decide which profiles you will have. The gateway runs as user 10001 inside the container, so give it what it needs to read and write:
+
+```
+sudo chown -R 10001:10001 state config/secrets
+sudo chmod 700 config/secrets
+```
+
+Check the file before starting anything. Copy it to a machine that has onionglass installed and run:
+
+```
+onionglass check-config --config config/team.toml
+```
+
+It says what is on and warns about what is missing: no audit log, no kill file, no held list, no policy. Take every warning seriously, or know exactly why you are ignoring it.
+
+## 4. Start it
+
+```
+docker compose up --build -d
+docker compose logs -f proxy
+```
+
+The proxy asks Let's Encrypt for the wildcard certificate by creating a short-lived record in your DNS zone. The first time can take a minute or two. When the log shows the certificate was obtained, open `https://your-domain/`. You should see the entry page, and it should say the address is not yours to open without signing in.
+
+If the certificate fails, the likeliest causes are a token with too little permission, the domain not yet on Cloudflare's nameservers, or a CAA record that does not allow Let's Encrypt. If it complains that the record never appeared, the server's own resolver may be caching an old answer. Add a `resolvers` line with a public resolver inside the `tls` block of `proxy/Caddyfile`. Let's Encrypt limits repeated failures, so fix the cause before retrying many times.
+
+## 5. Try it before anyone else does
+
+Make a sign-in link with the private key, from wherever you keep it:
+
+```
+onionglass ticket --key-file signin-1.private.pem --key-id signin-1 \
+    --subject test --group staff --profile free --url https://your-domain
+```
+
+Open the link in a browser. You should land on the entry page signed in, be able to open an onion address, and see it in a frame with its address above it. Check these before you open the doors:
+
+- A profile that does not exist is refused, and a link works only once.
+- A blocked address is refused, and a held one too.
+- The audit log in `state/audit.log` records what you did, with no page content.
+- `echo all > state/kill` stops the gateway within a couple of seconds, and `rm state/kill` resumes it.
+- The report button works, and a report appears in `state/reports.log`.
+- From outside, only ports 80 and 443 answer.
+- Stopping both Tor containers makes pages fail with a clear message instead of hanging.
+
+## 6. Running it
+
+**Stopping.** `echo all > state/kill` stops everything. `echo "profile free" > state/kill` stops one profile. `echo "onion ADDRESS" > state/kill` stops one site. Remove the file to resume. The health check stays up.
+
+**Reviewing.** `state/held.txt` is the queue of sites held by the name gate or by enough reports, one per line with the time and the reason. Delete a line to release a site. Look at what is in it as the abuse procedure says, which is as little as you can.
+
+**Logs.** The audit log is opened for every line, so moving it away to rotate it just works. Keep it on a disk with room, because a full disk stops the gateway. Decide how long you keep it and write it down.
+
+**Metrics.** Point Prometheus at `/_og/metrics` with the token, as shown in running.md. Alert on fetch failures rising, on the kill gauge going to 1, and on any `unavailable` refusal. Monitor the certificate's expiry separately.
+
+**Backups.** Back up `config/` (without the private key, which lives elsewhere), `state/` and the `caddy-data` volume. Losing the volume only costs you a new certificate.
+
+**Updating.** `git pull`, then `docker compose up --build -d`. Read the release notes first. Sessions end when the gateway restarts, which also moves every visitor to new Tor circuits.
+
+**Rotating the sign-in key.** Make a new pair, add its public key to `[tickets]` beside the old one, switch your sign-in service to the new private key, wait for the old links to expire (five minutes at most), then remove the old public key and restart.
+
+## What this does not give you
+
+- **Anonymity from you.** You, and anyone who breaks into the server, can see every address visitors open. The entry page says so. Do not describe the service as anonymous.
+- **Encrypted client hello.** The name of the site a visitor reaches is a random-looking sub-domain, so nothing about the onion address leaks in a certificate or in a name lookup, but the domain itself is visible to anyone watching the network. Encrypted client hello is planned.
+- **A sign-in service**, the legal review, the abuse contact and the reporting route. Those are yours.
+- **An independent penetration test.** The project has had three reviews and a lot of testing, and none of it replaces a test by someone outside it before you open the service to the public.

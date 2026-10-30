@@ -1,0 +1,27 @@
+# Ends TLS for the gateway's domain and one sub-domain for every visitor session below it, with a
+# single wildcard certificate. Needs DOMAIN and ACME_EMAIL in the environment, and
+# CLOUDFLARE_API_TOKEN, a token that can edit DNS records for this one zone and nothing else.
+{
+	email {$ACME_EMAIL}
+	# No admin interface, and no request log: a log of requests would be a log of the sites
+	# people looked at.
+	admin off
+}
+
+{$DOMAIN}, *.{$DOMAIN} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# The gateway sets its own security headers and builds every request to an onion site from
+	# scratch, so nothing about the visitor is passed on. The address of the visitor is not
+	# even given to the gateway.
+	header -Server
+
+	reverse_proxy gateway:8080 {
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+		header_up -X-Real-IP
+	}
+}

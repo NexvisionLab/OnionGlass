@@ -61,6 +61,9 @@ class UpstreamError(Exception):
 class TorConfig:
     socks_host: str = "127.0.0.1"
     socks_ports: tuple[int, ...] = (9050,)
+    # A pool of Tor processes on other hosts, as (host, port). When given, this replaces the two
+    # settings above, so each Tor can be its own container.
+    endpoints: tuple[tuple[str, int], ...] = ()
     proxy_connect_timeout: float = 10.0
     connect_timeout: float = 60.0
     read_timeout: float = 60.0
@@ -71,8 +74,19 @@ class TorConfig:
     min_tls_version: ssl.TLSVersion = ssl.TLSVersion.TLSv1_2
 
     def __post_init__(self) -> None:
-        if not self.socks_ports:
+        if self.endpoints:
+            for host, port in self.endpoints:
+                if not host or not 1 <= port <= 65535:
+                    raise ValueError("a Tor endpoint needs a host and a port from 1 to 65535")
+        elif not self.socks_ports:
             raise ValueError("at least one SOCKS port is needed")
+
+    @property
+    def pool(self) -> tuple[tuple[str, int], ...]:
+        """Every Tor SOCKS endpoint the gateway may use, as (host, port)."""
+        if self.endpoints:
+            return self.endpoints
+        return tuple((self.socks_host, port) for port in self.socks_ports)
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,9 +209,10 @@ class TorFetcher:
     def __init__(self, config: TorConfig | None = None) -> None:
         self._config = config or TorConfig()
 
-    def _port_for(self, isolation_key: str) -> int:
-        ports = self._config.socks_ports
-        return ports[zlib.crc32(isolation_key.encode("ascii")) % len(ports)]
+    def _endpoint_for(self, isolation_key: str) -> tuple[str, int]:
+        """The Tor process for a session. The same session always gets the same one."""
+        pool = self._config.pool
+        return pool[zlib.crc32(isolation_key.encode("ascii")) % len(pool)]
 
     async def fetch(
         self, request: UpstreamRequest, *, max_body_bytes: int | None = None
@@ -209,11 +224,12 @@ class TorFetcher:
         tls: TlsInfo | None = None
         try:
             async with asyncio.timeout(self._config.total_timeout):
+                proxy_host, proxy_port = self._endpoint_for(request.isolation_key)
                 reader, writer = await socks5_connect(
                     request.origin.host.hostname,
                     request.origin.port,
-                    proxy_host=self._config.socks_host,
-                    proxy_port=self._port_for(request.isolation_key),
+                    proxy_host=proxy_host,
+                    proxy_port=proxy_port,
                     username=f"og-{request.isolation_key}",
                     proxy_connect_timeout=self._config.proxy_connect_timeout,
                     connect_timeout=self._config.connect_timeout,

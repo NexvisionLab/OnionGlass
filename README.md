@@ -2,7 +2,7 @@
 
 A self-hostable gateway that lets you open `.onion` sites in an ordinary browser, safely, and capture what you see as evidence.
 
-> **Status: pre-alpha.** Personal mode works: you can open onion sites in your own browser, on your own machine, through your own Tor. Blocklists and allowlists, a kill file, an audit log and per-session profiles with request limits and daily allowances, a page-title name gate with a held list, text-only display of unrated sites, a report button with a review queue, Prometheus metrics, signed HTTP hooks for policy, audit and quota, and a team-mode launcher driven by one config file work. Evidence capture, the admin interface, team and public modes, and the full remote browser are not built yet, and it has not had an independent security test. Do not run it as a service for other people. See [Running onionglass](docs/running.md).
+> **Status: pre-alpha.** Personal mode works: you can open onion sites in your own browser, on your own machine, through your own Tor. Blocklists and allowlists, a kill file, an audit log and per-session profiles with request limits and daily allowances, a page-title name gate with a held list, text-only display of unrated sites, a report button with a review queue, Prometheus metrics, signed HTTP hooks for policy, audit and quota, a team-mode launcher driven by one config file, and a deployment bundle with a Tor pool and a wildcard-certificate proxy (written, not yet run) are in place. Evidence capture, the admin interface, team and public modes, and the full remote browser are not built yet, and it has not had an independent security test. Do not run it as a service for other people. See [Running onionglass](docs/running.md).
 
 ## What it is for
 

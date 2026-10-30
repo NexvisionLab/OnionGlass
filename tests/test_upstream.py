@@ -386,6 +386,35 @@ def test_a_session_always_uses_the_same_tor_port_and_sessions_spread_out() -> No
     run(scenario())
 
 
+def test_a_pool_of_tor_endpoints_is_used_the_same_way() -> None:
+    async def scenario() -> None:
+        async with (
+            FakeOnionServer(static_response(http_response(b"x"))) as onion,
+            FakeTor(onion.port) as tor_a,
+            FakeTor(onion.port) as tor_b,
+        ):
+            pool = (("127.0.0.1", tor_a.port), ("127.0.0.1", tor_b.port))
+            # The older settings are ignored once endpoints are given.
+            fetcher = TorFetcher(TorConfig(endpoints=pool, socks_ports=(1,), total_timeout=4))
+            for _ in range(3):
+                await fetcher.fetch(make_request(key="steady-session"))
+            assert sorted((len(tor_a.seen), len(tor_b.seen))) == [0, 3]
+            for index in range(40):
+                await fetcher.fetch(make_request(key=f"session-{index:04d}"))
+            assert len(tor_a.seen) > 3 and len(tor_b.seen) > 3
+
+    run(scenario())
+
+
+def test_the_pool_is_the_endpoints_if_given_and_otherwise_the_host_and_ports() -> None:
+    assert TorConfig(socks_host="tor", socks_ports=(1, 2)).pool == (("tor", 1), ("tor", 2))
+    assert TorConfig(endpoints=(("a", 9050), ("b", 9050))).pool == (("a", 9050), ("b", 9050))
+    assert TorConfig().pool == (("127.0.0.1", 9050),)
+    for bad in ((("", 9050),), (("a", 0),), (("a", 70000),)):
+        with pytest.raises(ValueError, match="Tor endpoint"):
+            TorConfig(endpoints=bad)
+
+
 def test_the_pool_needs_at_least_one_port() -> None:
     with pytest.raises(ValueError, match="SOCKS port"):
         TorConfig(socks_ports=())

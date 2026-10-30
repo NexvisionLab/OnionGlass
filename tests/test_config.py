@@ -268,6 +268,38 @@ def test_relative_paths_belong_to_the_config_folder_not_to_where_it_is_started(
     assert load_config(layout.config).settings.policy is not None
 
 
+TOR_BLOCK = 'host = "127.0.0.1"\nports = [9050, 9052]'
+
+
+def test_the_tor_pool_can_be_several_hosts(layout: Layout) -> None:
+    text = layout.text().replace(
+        TOR_BLOCK, 'endpoints = ["tor-a:9050", "tor-b:9050", "[::1]:9051"]'
+    )
+    layout.config.write_text(text, encoding="utf-8")
+    pool = load_config(layout.config).tor.pool
+    assert pool == (("tor-a", 9050), ("tor-b", 9050), ("::1", 9051))
+
+
+@pytest.mark.parametrize(
+    ("endpoints", "message"),
+    [
+        ("endpoints = []", "must not be empty"),
+        ('endpoints = ["tor-a"]', "host:port"),
+        ('endpoints = ["tor-a:0"]', "from 1 to 65535"),
+        ('endpoints = ["tor-a:99999"]', "from 1 to 65535"),
+        ('endpoints = ["tor-a:abc"]', "from 1 to 65535"),
+        ('endpoints = [":9050"]', "from 1 to 65535"),
+        ("endpoints = [9050]", "host:port"),
+        ('endpoints = ["tor-a:9050"]\nports = [9050]', "not both"),
+        ('endpoints = ["tor-a:9050"]\nhost = "tor-b"', "not both"),
+    ],
+)
+def test_bad_tor_endpoints_are_refused(layout: Layout, endpoints: str, message: str) -> None:
+    layout.config.write_text(layout.text().replace(TOR_BLOCK, endpoints), encoding="utf-8")
+    with pytest.raises(ConfigError, match=message):
+        load_config(layout.config)
+
+
 # --- keys and secrets ----------------------------------------------------------------------------
 
 

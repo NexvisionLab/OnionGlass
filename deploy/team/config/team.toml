@@ -1,0 +1,64 @@
+# The gateway's settings for the compose file next to this folder. Read docs/deploying.md, then
+# change the domain and the key. docs/examples/team.toml explains every setting.
+#
+# This folder is mounted read-only into the gateway. Keys and secrets go in keys/ and secrets/
+# here and are never committed. Things the gateway writes go in the state folder, which is
+# /var/lib/onionglass inside the container.
+
+[server]
+domain = "gateway.example.org"   # change this, and set DOMAIN in .env to the same
+scheme = "https"
+listen = "0.0.0.0"               # inside the container only; the proxy is the only way in
+port = 8080
+
+[tor]
+endpoints = ["tor-a:9050", "tor-b:9050"]
+
+[tickets]
+audience = "onionglass"
+# Make the pair with: onionglass keys generate --id signin-1 --out keys
+# Keep the private key with whatever signs visitors in. Only the public key goes here.
+keys = [
+  { id = "signin-1", public_key_file = "keys/signin-1.public.pem" },
+]
+
+[limits]
+session_hours = 8
+max_new_sessions_per_minute = 30
+max_concurrent_fetches = 32
+max_fetches_per_session = 6
+
+# The cautious profile, for sessions whose ticket names it.
+[profile]
+name = "free"
+preset = "restricted"
+# Decide the free allowance before opening to the public (docs/running.md, "Daily allowances"),
+# then add a [quota] section and set daily_quota, open_cost and page_cost here.
+
+[profiles.pro]
+allow_images = true
+max_requests_per_minute = 300
+
+[policy]
+blocklist = "lists/blocked.txt"
+# rated_list = "lists/rated.txt"  # if set, every other site is shown as text only
+
+[kill]
+file = "/var/lib/onionglass/kill"   # echo all > state/kill stops everything, rm resumes
+
+[audit]
+file = "/var/lib/onionglass/audit.log"
+address_form = "origin"
+
+[held]
+file = "/var/lib/onionglass/held.txt"
+
+# [names]
+# file = "lists/names.txt"       # your own phrase list; needs the [held] section above
+
+[reports]
+file = "/var/lib/onionglass/reports.log"
+hold_after = 3
+
+[metrics]
+token_file = "secrets/metrics.token"

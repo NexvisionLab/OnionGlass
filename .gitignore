@@ -21,6 +21,7 @@ htmlcov/
 *.key
 *.p12
 secrets/
+deploy/team/state/
 *.local.toml
 *.local.yaml
 

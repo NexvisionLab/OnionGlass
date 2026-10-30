@@ -146,6 +146,8 @@ Each request is written down before it goes out, and its outcome when it comes b
 
 ## Running it for other people
 
+This section explains the config file. For the whole job on a server, including the proxy, the certificate and the checks to make before opening it, follow [deploying.md](deploying.md).
+
 Personal mode, above, is for one person on one machine. To serve other people, run the gateway behind a proxy that ends TLS, give it a domain with a wildcard certificate, and describe it in one TOML file. [docs/examples/team.toml](examples/team.toml) lists every setting with its meaning, and the tests load that file exactly as written, so it stays correct.
 
 ```

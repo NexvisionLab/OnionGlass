@@ -1,0 +1,3 @@
+# Onion addresses that are never opened, one per line. A line starting with # is a comment.
+# Changes are read when the gateway starts. For a block that must take effect at once, put the
+# address in the held file or stop the gateway with the kill file.

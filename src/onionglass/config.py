@@ -380,8 +380,30 @@ def _server(reader: _Reader) -> tuple[str, str, str, int, int | None]:
     )
 
 
+def _endpoint(text: Any, where: str) -> tuple[str, int]:
+    """``host:port`` or ``[ipv6]:port`` as a pair."""
+    if not isinstance(text, str) or ":" not in text:
+        raise ConfigError(f"{where} must be host:port")
+    host, _, port_text = text.rpartition(":")
+    host = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    if not host or not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
+        raise ConfigError(f"{where} must be host:port with a port from 1 to 65535")
+    return host, int(port_text)
+
+
 def _tor(reader: _Reader) -> TorConfig:
-    table = reader.table("tor", {"host", "ports"})
+    table = reader.table("tor", {"host", "ports", "endpoints"})
+    if "endpoints" in table:
+        if "host" in table or "ports" in table:
+            raise ConfigError("[tor]: use either endpoints, or host and ports, not both")
+        listed = _get(table, "endpoints", list, "[tor]")
+        if not listed:
+            raise ConfigError("[tor].endpoints must not be empty")
+        pool = tuple(_endpoint(item, f"[tor].endpoints[{i}]") for i, item in enumerate(listed, 1))
+        try:
+            return TorConfig(endpoints=pool)
+        except ValueError as exc:
+            raise ConfigError(f"[tor]: {exc}") from exc
     ports = _get_or(table, "ports", list, "[tor]", [9050])
     if not all(isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= 65535 for p in ports):
         raise ConfigError("[tor].ports must be whole numbers between 1 and 65535")

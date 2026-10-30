@@ -1,0 +1,100 @@
+# The gateway for other people: two Tor processes, the gateway, and a proxy that ends TLS.
+#
+# Read docs/deploying.md first. In short, on a server that has been hardened:
+#
+#   cp env.example .env           and set DOMAIN and ACME_EMAIL
+#   (put the DNS token in secrets/proxy.env, the keys and lists under config/)
+#   docker compose up --build -d
+#
+# What the layout guarantees:
+#   * Only the proxy is published, on ports 80 and 443.
+#   * The gateway sits on a network with no route out. Only the two Tor containers can reach the
+#     internet, and the proxy can for certificates.
+#   * Every container is read-only, drops all capabilities and cannot gain new ones.
+#
+# Docker was not available where this file was written, so it has been checked for structure by
+# the tests and has not been run. Bring it up on a test machine before you rely on it.
+
+x-hardened: &hardened
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  tor-a:
+    <<: *hardened
+    build: ../../tor
+    networks: [private, egress]
+    volumes:
+      - tor-a-data:/var/lib/tor
+    mem_limit: 1g
+    pids_limit: 256
+
+  tor-b:
+    <<: *hardened
+    build: ../../tor
+    networks: [private, egress]
+    volumes:
+      - tor-b-data:/var/lib/tor
+    mem_limit: 1g
+    pids_limit: 256
+
+  gateway:
+    <<: *hardened
+    build: ../..
+    depends_on: [tor-a, tor-b]
+    networks: [private]
+    command: ["serve", "--config", "/etc/onionglass/team.toml"]
+    volumes:
+      # Settings, keys and lists are read-only. Only the state folder can be written.
+      - ./config:/etc/onionglass:ro
+      - ./state:/var/lib/onionglass
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 1g
+    pids_limit: 300
+
+  proxy:
+    <<: *hardened
+    build: ./proxy
+    depends_on: [gateway]
+    networks: [private, frontend]
+    ports:
+      - "80:80"
+      - "443:443"
+    cap_add: [NET_BIND_SERVICE]
+    # The DNS provider token for the wildcard certificate lives here, outside the repository.
+    env_file: ./secrets/proxy.env
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and the account key. Losing them means asking for a new certificate.
+      - caddy-data:/data
+    tmpfs:
+      - /tmp
+      - /config
+    mem_limit: 256m
+    pids_limit: 150
+
+networks:
+  # The gateway, Tor and the proxy talk here. Nothing on this network can reach the internet.
+  private:
+    internal: true
+  # Tor's way out to the Tor network.
+  egress: {}
+  # The proxy's way to publish its ports and to reach the certificate authority.
+  frontend: {}
+
+volumes:
+  tor-a-data: {}
+  tor-b-data: {}
+  caddy-data: {}

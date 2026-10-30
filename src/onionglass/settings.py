@@ -12,6 +12,7 @@ from onionglass.headers import HeaderPolicy
 from onionglass.held import HeldList
 from onionglass.hosts import GatewayHosts
 from onionglass.killswitch import KillSwitch
+from onionglass.lookalike import KnownSites
 from onionglass.namegate import NameGate
 from onionglass.policy import Policy
 from onionglass.quota import QuotaMeter
@@ -146,6 +147,7 @@ class Settings:
     hook_timeout: float = 2.0
     name_gate_hold_after: int = 2
     abuse_contact: str | None = None  # shown on the abuse page
+    known_sites: KnownSites | None = None  # sites whose look-alikes get a warning
 
     def profile_named(self, name: str) -> Profile | None:
         """The profile a session was given, or None if this gateway does not have it."""

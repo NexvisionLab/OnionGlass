@@ -640,6 +640,42 @@ class Gateway:
             return self._error("bad_request", apex=True)
         return self._apex(pages.external_page(target), framed=True)
 
+    async def _read_open_form(self, request: Request) -> OnionUrl | Response:
+        """The address typed into the entry form, or the page to send instead.
+
+        That is an error for a body that is too big or an address that is no address, and the
+        warning for one that imitates a listed site and has not been confirmed.
+        """
+        raw = await self._read_body(request, _FORM_LIMIT)
+        if raw is None:
+            return self._error("payload_too_large", apex=True)
+        fields = parse_qs(
+            raw.decode("ascii", errors="ignore"), keep_blank_values=True, max_num_fields=10
+        )
+        typed = (fields.get("address") or [""])[0].strip()
+        parsed = _typed_address(typed)
+        if parsed is None:
+            body = pages.landing_page(notice="That is not a valid version 3 onion address.")
+            return self._apex(body, 400, form=True)
+        return self._lookalike_warning(parsed, typed, fields) or parsed
+
+    def _lookalike_warning(
+        self, parsed: OnionUrl, typed: str, fields: dict[str, list[str]]
+    ) -> Response | None:
+        """The warning page for an address that imitates a listed one, unless it was confirmed.
+
+        It is shown before the request is counted, charged or recorded, because nothing has been
+        asked of anyone yet.
+        """
+        known = self.settings.known_sites
+        if known is None or fields.get("confirm") == ["1"]:
+            return None
+        real = known.lookalike_of(parsed.origin.host.address)
+        if real is None:
+            return None
+        shown = parsed.origin.host.address + ".onion"
+        return self._apex(pages.lookalike_page(typed, shown, real.name, real.address), form=True)
+
     async def _too_many_opens(
         self, session_id: str, profile: Profile, origin: OnionOrigin
     ) -> Response | None:
@@ -659,16 +695,9 @@ class Gateway:
         existing = await self._current_session(request)
         if existing is None and not self.settings.open_mode:
             return self._error("sign_in_required", apex=True)
-        raw = await self._read_body(request, _FORM_LIMIT)
-        if raw is None:
-            return self._error("payload_too_large", apex=True)
-        fields = parse_qs(
-            raw.decode("ascii", errors="ignore"), keep_blank_values=True, max_num_fields=10
-        )
-        parsed = _typed_address((fields.get("address") or [""])[0])
-        if parsed is None:
-            body = pages.landing_page(notice="That is not a valid version 3 onion address.")
-            return self._apex(body, 400, form=True)
+        parsed = await self._read_open_form(request)
+        if isinstance(parsed, Response):
+            return parsed
         who = await self._who_of(existing)
         target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         profile = self.settings.profile_named(who.profile)

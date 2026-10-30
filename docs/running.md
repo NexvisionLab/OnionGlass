@@ -151,6 +151,16 @@ With `--report-file FILE`, the viewer shows a "Report this site" button next to 
 - With `--hold-after N` (and `--held-file`), a site that N different visitors have reported is held, so nobody can open it until a person has looked and removed its line from the held file.
 - If the file cannot be written, the visitor is told the report was not recorded.
 
+### Look-alike warning
+
+Copycat onion sites are made by searching for an address that starts like a popular one: a few characters are cheap to match, and the end of an address is a checksum that cannot be chosen. With `--known-sites FILE` (or `[known_sites]` in the config file), you list the sites people are likely to mean, one per line, the address and then a name:
+
+```
+2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid   The Tor Project
+```
+
+When a visitor types an address that starts with the same six characters as a listed one, and is not it, they see a page that names the listed site, shows both addresses as plain text, and offers "Open it anyway". Nothing has been fetched, counted, charged or recorded by then. Six characters are 30 bits, so an unrelated site shares them with a given listed one about once in a billion times. The warning covers addresses people type or paste. It does not look at links on pages, and it knows only the sites on your list. An address on the list is never warned about.
+
 ### The abuse page
 
 With `[abuse] contact = "..."` in the config file, the gateway serves `/abuse` to anyone, signed in or not. It names the contact (an email address or an https link, nothing else is accepted), tells people to send the address and never the material, lists the reasons the report button offers, and says what happens next. The entry page links to it. Without a contact the page says the operator has not published one, the entry page does not link to it, and `check-config` warns. Write the contact once and read what arrives there: the [abuse procedure](abuse-procedure.md) is what to do with it.

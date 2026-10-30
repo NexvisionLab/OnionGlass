@@ -56,6 +56,9 @@ file = "/var/lib/onionglass/held.txt"
 # [names]
 # file = "lists/names.txt"       # your own phrase list; needs the [held] section above
 
+# [known_sites]
+# file = "lists/known-sites.txt"  # "address name" per line; typed addresses that start like one get a warning
+
 [abuse]
 # Shown on /abuse. Change this to a mailbox somebody reads, before you open to anyone.
 contact = "abuse@your-domain.example"

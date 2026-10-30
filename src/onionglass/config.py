@@ -31,6 +31,7 @@ from onionglass.audit import ADDRESS_FORMS, AuditSink, JsonLinesAudit
 from onionglass.held import HeldList
 from onionglass.hooks import HookClient, HttpAudit, HttpPolicy, HttpQuota
 from onionglass.killswitch import KillSwitch
+from onionglass.lookalike import KnownSites, load_known_sites
 from onionglass.namegate import load_name_gate
 from onionglass.policy import PolicyConfigError, StaticPolicy, load_address_list
 from onionglass.quota import LocalQuota, QuotaError
@@ -42,7 +43,7 @@ from onionglass.upstream import TorConfig
 SECTIONS = frozenset(
     {
         "server", "tor", "tickets", "limits", "profile", "profiles", "policy", "kill", "audit",
-        "held", "names", "reports", "metrics", "quota", "hooks", "abuse",
+        "held", "names", "reports", "metrics", "quota", "hooks", "abuse", "known_sites",
     }
 )  # fmt: skip
 PROFILE_FIELDS = frozenset(f.name for f in fields(Profile))
@@ -499,6 +500,11 @@ def _abuse_contact(reader: _Reader) -> str | None:
     return str(contact)
 
 
+def _known_sites(reader: _Reader) -> KnownSites | None:
+    path = _single_path(reader, "known_sites")
+    return load_known_sites(path) if path else None
+
+
 def _safety_files(reader: _Reader) -> dict[str, Any]:
     """The kill file, held list, name gate, report queue and metrics token."""
     kill_file = _single_path(reader, "kill")
@@ -510,6 +516,7 @@ def _safety_files(reader: _Reader) -> dict[str, Any]:
         "held": held,
         "name_gate": load_name_gate(names_file) if names_file else None,
         "abuse_contact": _abuse_contact(reader),
+        "known_sites": _known_sites(reader),
         "name_gate_hold_after": _get_or(
             reader.table("names", {"file", "hold_after"}), "hold_after", int, "[names]", 2
         ),

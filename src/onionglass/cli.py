@@ -15,6 +15,7 @@ from onionglass.audit import ADDRESS_FORMS, AddressForm, JsonLinesAudit
 from onionglass.gateway import Gateway
 from onionglass.held import HeldList
 from onionglass.killswitch import KillSwitch
+from onionglass.lookalike import load_known_sites
 from onionglass.namegate import load_name_gate
 from onionglass.pages import OPERATOR_NOTICE
 from onionglass.policy import PolicyConfigError, StaticPolicy, load_address_list
@@ -43,6 +44,7 @@ def build_gateway(  # noqa: PLR0913
     audit_address: AddressForm = "origin",
     rated_list: Path | None = None,
     name_list: Path | None = None,
+    known_sites: Path | None = None,
     held_file: Path | None = None,
     report_file: Path | None = None,
     hold_after: int | None = None,
@@ -92,6 +94,7 @@ def build_gateway(  # noqa: PLR0913
             reports=reports,
             metrics_token=metrics_token,
             name_gate=load_name_gate(name_list) if name_list is not None else None,
+            known_sites=load_known_sites(known_sites) if known_sites is not None else None,
         )
     except ValueError as exc:
         raise PolicyConfigError(str(exc)) from exc
@@ -143,6 +146,12 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--name-list",
         type=Path,
         help="file of phrases that hold a site when they appear in a page title or heading",
+    )
+    parser.add_argument(
+        "--known-sites",
+        type=Path,
+        help="file of well-known sites (address and name per line); a typed address that "
+        "starts like one of them gets a warning",
     )
     parser.add_argument(
         "--held-file",
@@ -206,6 +215,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             audit_address=args.audit_address,
             rated_list=args.rated_list,
             name_list=args.name_list,
+            known_sites=args.known_sites,
             held_file=args.held_file,
             report_file=args.report_file,
             hold_after=args.hold_after,

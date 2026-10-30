@@ -249,6 +249,29 @@ def landing_page(
     return _page("onionglass", body)
 
 
+def lookalike_page(typed: str, shown: str, real_name: str, real_address: str) -> bytes:
+    """The warning before an address that starts like a well-known one.
+
+    ``typed`` is what the visitor entered, to be sent again if they go on. ``shown`` is the address
+    in it. Both addresses are text, never links, so nothing here can be followed by accident.
+    """
+    body = (
+        "<h1>This is not the site you may mean</h1>"
+        f'<p class="error">The address you entered starts like the address of '
+        f"{html.escape(real_name)}, but it is a different site.</p>"
+        f"<p>You entered:</p><p><code>{html.escape(shown)}</code></p>"
+        f"<p>{html.escape(real_name)} is at:</p><p><code>{html.escape(real_address)}</code></p>"
+        "<p>Copycat sites are made on purpose to look like the real one. Check where the address "
+        "came from before you go on.</p>"
+        '<form method="post" action="/open">'
+        f'<input type="hidden" name="address" value="{html.escape(typed)}">'
+        '<input type="hidden" name="confirm" value="1">'
+        '<button type="submit">Open it anyway</button></form>'
+        '<p><a href="/">Go back</a></p>'
+    )
+    return _page("Check this address", body)
+
+
 def abuse_page(contact: str | None) -> bytes:
     """How to report a site or complain, and what the operator does with it."""
     if contact is None:

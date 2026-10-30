@@ -77,6 +77,9 @@ class Layout:
         (root / "lists" / "blocked.txt").write_text(f"{TOR_PROJECT}\n", encoding="utf-8")
         (root / "lists" / "rated.txt").write_text(f"{DUCKDUCKGO}\n", encoding="utf-8")
         (root / "lists" / "names.txt").write_text("grape\n", encoding="utf-8")
+        (root / "lists" / "known-sites.txt").write_text(
+            f"{TOR_PROJECT} The Tor Project\n", encoding="utf-8"
+        )
         secret(root / "secrets" / "audit.salt", SALT.encode())
         secret(root / "secrets" / "metrics.token", TOKEN.encode())
         shutil.copy(EXAMPLE, root / "team.toml")

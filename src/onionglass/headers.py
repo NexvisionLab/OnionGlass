@@ -246,7 +246,7 @@ def normalise_multipart(body: bytes, content_type: str | None) -> tuple[bytes, s
 
     Different browsers choose different boundary styles, and the boundary is chosen by the
     visitor's browser, so passing it on would tell an onion site which browser a visitor uses.
-    A boundary cannot occur inside the body it delimits, so swapping it is safe.
+    A delimiter line cannot occur inside the body it delimits, so swapping it is safe.
     """
     if content_type is None or parse_content_type(content_type)[0] != "multipart/form-data":
         return body, content_type
@@ -260,7 +260,11 @@ def normalise_multipart(body: bytes, content_type: str | None) -> tuple[bytes, s
     for _ in range(5):
         replacement = "----geckoformboundary" + secrets.token_hex(16)
         if replacement.encode("ascii") not in body:
-            swapped = body.replace(boundary.encode("ascii"), replacement.encode("ascii"))
+            # Only the delimiter lines name the boundary. Swapping every occurrence of its text
+            # would damage a body whose data happens to contain a short boundary.
+            swapped = body.replace(
+                b"--" + boundary.encode("ascii"), b"--" + replacement.encode("ascii")
+            )
             return swapped, f"multipart/form-data; boundary={replacement}"
     raise ValueError("could not choose a multipart boundary")
 

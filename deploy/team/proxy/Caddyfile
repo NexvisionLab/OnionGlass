@@ -18,6 +18,11 @@
 	# even given to the gateway.
 	header -Server
 
+	# The metrics are for the operator's own scraper, which reaches the gateway directly inside
+	# the compose network. They are never offered to the public internet, token or not.
+	@metrics path /_og/metrics /_og/metrics/*
+	respond @metrics 404
+
 	reverse_proxy gateway:8080 {
 		header_up -X-Forwarded-For
 		header_up -X-Forwarded-Host

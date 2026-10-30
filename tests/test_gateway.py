@@ -84,6 +84,8 @@ class Env:
     def __init__(
         self,
         handler: Callable[[UpstreamRequest], UpstreamResponse | Exception] | None = None,
+        *,
+        store: InMemoryStore | None = None,
         **settings: Any,
     ) -> None:
         profile = settings.pop("profile", Profile())
@@ -96,7 +98,7 @@ class Env:
             **settings,
         )
         self.fetcher = FakeFetcher(handler)
-        self.store = InMemoryStore()
+        self.store = store or InMemoryStore()
         self.clock = [1000.0]
         self.gateway = Gateway(
             self.settings,

@@ -198,7 +198,7 @@ def test_the_kill_gauge_follows_the_kill_file(tmp_path: Path) -> None:
 
 
 def test_rate_limits_quotas_unknown_profiles_and_the_name_gate_are_counted(tmp_path: Path) -> None:
-    profile = Profile(name="personal", max_requests_per_minute=1)
+    profile = Profile(name="personal", max_requests_per_minute=2)  # opening counts as one
     env = Env(
         lambda _r: reply("<title>Grape</title><p>x</p>"),
         profile=profile,

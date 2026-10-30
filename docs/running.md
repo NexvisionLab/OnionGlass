@@ -110,7 +110,7 @@ A list that cannot be read, or that has a line that is not an onion address, sto
 
 ### Profiles
 
-A profile says what a visitor may do: images, fonts, forms and logins, file uploads, page and file size limits, and a limit on requests per minute. A signed-in visitor's ticket names a profile, and the gateway gives that session exactly that profile. A ticket that names a profile this gateway does not have is refused, and so is a session whose profile has since been removed. Nobody is ever given the default profile by mistake.
+A profile says what a visitor may do: images, fonts, forms and logins, file uploads, page and file size limits, and a limit on requests per minute (typing in an address counts as a request, and one session can only type in so many addresses, `max_opens_per_session`). A signed-in visitor's ticket names a profile, and the gateway gives that session exactly that profile. A ticket that names a profile this gateway does not have is refused, and so is a session whose profile has since been removed. Nobody is ever given the default profile by mistake.
 
 The profile is enforced on the request as well as on the page that comes back. A profile without forms refuses a post even if the visitor sends one by hand, and a profile without uploads refuses a body that carries a file. Profiles are set in the gateway's settings (`Settings.profiles`). `Profile.restricted()` is a ready-made text-only profile: no images, fonts, forms, logins or uploads, and 60 requests a minute. Personal mode has one profile and the command line does not change it.
 
@@ -125,7 +125,7 @@ A profile can carry a daily allowance per account (`daily_quota`). What it count
 - With a journal file (`LocalQuota(path)`) the counts survive a restart. Without one they live in memory and a restart starts everyone afresh.
 - If the meter cannot be read or written, the request is refused, and a page whose charge cannot be recorded is withheld. A profile without an allowance is not affected.
 
-The check happens just before a request goes out and the charge just after, so a burst of simultaneous requests can overshoot the allowance by about as many requests as are in flight.
+Opens are taken in one step: the meter checks that the allowance is not passed and takes the units together, so requests that arrive at the same moment cannot overspend it. The first request to a site in a session counts as an open, whether the address was typed in or reached by following a link, and the same site again in that session does not. Pages are charged after they come back, so a burst of simultaneous page requests can still overshoot a pages allowance by about as many pages as are in flight.
 
 ### Unrated sites
 
@@ -133,7 +133,7 @@ With `--rated-list FILE` (one onion address per line), the sites on the list are
 
 ### The name gate and the held list
 
-`--name-list FILE` lists phrases, one per line. When the title or one of the first headings of a page contains a listed phrase, the page is refused and the site is added to the held list. Every later request to that site is refused, for everyone, until a person removes its line from the file given with `--held-file`. The two options go together, because a gate with nowhere to remember its hits could only refuse once.
+`--name-list FILE` lists phrases, one per line. When the title or one of the first headings of a page contains a listed phrase, the page is refused and the site is added to the held list. Every later request to that site is refused, for everyone, until a person removes its line from the file given with `--held-file`. The two options go together, because a gate with nowhere to remember its hits could only refuse once. A listed title is always refused. The site is only held when the page did not merely repeat what the visitor sent (a search page that prints back the search is refused but proves nothing about the site), and on a gateway for other people, when at least `hold_after` different accounts have met it (setting `hold_after` in `[names]`, 2 by default). Without this, one visitor could hold any site by searching it for a listed phrase. In personal mode there is one visitor and the first hit holds.
 
 - A phrase matches whole words, so a word inside a longer, innocent word is not a hit. A single word can end in `*` to match every word that starts with it.
 - Accents, full-width letters, zero-width characters and common look-alike digits and symbols (`4` for `a`, `3` for `e`, and so on) do not hide a word.
@@ -153,7 +153,7 @@ With `--report-file FILE`, the viewer shows a "Report this site" button next to 
 
 ### Metrics
 
-With `--metrics-token-file FILE`, the gateway serves Prometheus metrics at `/_og/metrics` on its main address, to a scraper that sends the token from that file as `Authorization: Bearer <token>`. The token must be 16 or more printable characters with no spaces. Without the option the endpoint does not exist. Keep the token in a file and not on the command line.
+With `--metrics-token-file FILE`, the gateway serves Prometheus metrics at `/_og/metrics` on its main address, to a scraper that sends the token from that file as `Authorization: Bearer <token>`. The token must be 16 or more printable characters with no spaces. Without the option the endpoint does not exist. Keep the token in a file and not on the command line. The deployment bundle's proxy answers `404` for this path from outside, so scrape the gateway directly, from inside the same network.
 
 ```
 scrape_configs:

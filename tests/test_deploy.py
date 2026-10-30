@@ -203,8 +203,14 @@ def test_the_shipped_config_loads_and_matches_the_compose_file(
     torrc = (ROOT / "tor" / "torrc").read_text(encoding="utf-8")
     assert "SocksPort 0.0.0.0:9050" in torrc and "IsolateSOCKSAuth" in torrc
     assert "ClientOnly 1" in torrc
+    # Tor itself refuses anything that is not an onion address, whatever reaches its port.
+    socks_line = next(line for line in torrc.splitlines() if line.startswith("SocksPort"))
+    assert "OnionTrafficOnly" in socks_line
     assert (config.listen, config.port) == ("0.0.0.0", 8080)  # noqa: S104
     assert "gateway:8080" in CADDYFILE and (s.scheme, s.port) == ("https", None)
+    # The metrics endpoint is answered with 404 at the proxy, before the gateway is asked.
+    assert "@metrics path /_og/metrics" in CADDYFILE
+    assert CADDYFILE.index("respond @metrics 404") < CADDYFILE.index("reverse_proxy")
     # The cautious profile is the default, and a stronger one exists by name.
     assert (
         s.profile.name == "free" and not s.profile.allow_images and not s.profile.allow_post_forms

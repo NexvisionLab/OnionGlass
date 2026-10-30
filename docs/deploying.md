@@ -119,7 +119,13 @@ Open the link in a browser. You should land on the entry page signed in, be able
 
 **Logs.** The audit log is opened for every line, so moving it away to rotate it just works. Keep it on a disk with room, because a full disk stops the gateway. Decide how long you keep it and write it down.
 
-**Metrics.** Point Prometheus at `/_og/metrics` with the token, as shown in running.md. Alert on fetch failures rising, on the kill gauge going to 1, and on any `unavailable` refusal. Monitor the certificate's expiry separately.
+**Metrics.** The proxy answers `404` for `/_og/metrics` from outside, so the endpoint is never public. Run Prometheus on the same compose network and point it at `gateway:8080/_og/metrics` with the token, as shown in running.md. Alert on fetch failures rising, on the kill gauge going to 1, and on any `unavailable` refusal. Monitor the certificate's expiry separately.
+
+**What a compromised gateway can change.** The gateway writes to `state/`: the audit log, the held list, the report queue and the quota journal. If someone takes over the gateway process, they can edit those files, and a kill file kept in the same folder as well. The kill file and the lists the gateway only reads are mounted read-only already. For the kill file, the stronger setup is to keep it in a folder of its own, mount that folder read-only into the gateway, and switch it on and off from the host by writing `all` into it or removing it. Then a takeover of the gateway cannot lift a stop you put in place. Send the audit log to a place the gateway cannot rewrite as well, such as a log collector, if you need to rely on it later.
+
+**Hooks need a route.** The gateway sits on a network with no way out. If you use `[hooks]` for policy, audit or quota, the service they call must be reachable from the gateway, so put that service on the `private` network or on a second internal network that holds only it. Do not give the gateway general internet access to make a hook work. A hook that cannot be reached makes the gateway refuse requests, which is the safe failure.
+
+**The proxy's own log.** The proxy keeps no request log, but Caddy still writes operational messages to its output, and some of them, such as a failed TLS handshake, name the address that connected. Treat the proxy's container logs as sensitive, keep them short, and do not ship them anywhere that keeps them for long. This could not be checked here because Docker was not available, so look at what your own proxy writes on a test machine.
 
 **Backups.** Back up `config/` (without the private key, which lives elsewhere), `state/` and the `caddy-data` volume. Losing the volume only costs you a new certificate.
 

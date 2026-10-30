@@ -32,6 +32,7 @@ max_new_sessions_per_minute = 30
 max_concurrent_fetches = 32
 max_fetches_per_session = 6
 max_labels_per_session = 1000
+max_opens_per_session = 100     # addresses one session may type in
 max_labels_per_page = 100
 max_reports_per_session = 10
 hook_timeout = 2.0               # seconds a policy, audit or quota service has to answer
@@ -78,6 +79,7 @@ file = "state/held.txt"          # sites waiting for review; delete a line to re
 
 [names]
 file = "lists/names.txt"         # phrases that hold a site when they appear in a title or heading
+hold_after = 2                   # different accounts that must meet the hit before a site is held
 
 [reports]
 file = "state/reports.log"
@@ -99,3 +101,5 @@ file = "state/quota.log"         # keeps daily counts across restarts
 # response_keys = [{ id = "service-2026-10", public_key_file = "keys/service-2026-10.public.pem" }]
 # use = ["policy", "audit", "quota"]
 # cache_seconds = 5
+# audit_address_form = "origin"    # what the audit service is told: full, origin, hash or none
+# audit_salt_file = "secrets/audit.salt"  # keys the hash form, so it can be compared later

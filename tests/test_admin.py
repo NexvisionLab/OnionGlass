@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -202,10 +203,13 @@ def test_releasing_keeps_comments_and_other_sites_and_finds_every_form_of_the_ad
         f"{DUCKDUCKGO} 2026-10-30T00:02:00Z by hand\n",
         encoding="utf-8",
     )
+    before = paths.held.read_text(encoding="utf-8")
     held_release(paths, f"{TOR_PROJECT.upper()}.ONION")
-    assert paths.held.read_text(encoding="utf-8") == (
-        f"# queue, newest last\n{DUCKDUCKGO} 2026-10-30T00:02:00Z by hand\n"
-    )
+    after = paths.held.read_text(encoding="utf-8")
+    assert after.startswith(before)  # nothing was rewritten, a line was added
+    assert after[len(before) :].startswith(f"release {TOR_PROJECT} ")
+    assert [line.split()[0] for line in held_list(paths)] == [DUCKDUCKGO]
+    assert "# queue, newest last" in after
 
 
 def test_a_reason_cannot_break_the_line_format_and_bad_addresses_are_refused(
@@ -269,7 +273,7 @@ def test_a_report_file_that_is_not_one_is_an_error(paths: AdminPaths) -> None:
     ]
 
 
-def test_files_are_replaced_in_one_step_so_the_gateway_never_reads_half_a_file(
+def test_the_kill_file_is_replaced_in_one_step_and_the_record_files_only_ever_grow(
     paths: AdminPaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     replaced: list[tuple[str, str]] = []
@@ -281,13 +285,15 @@ def test_files_are_replaced_in_one_step_so_the_gateway_never_reads_half_a_file(
 
     monkeypatch.setattr("onionglass.admin.os.replace", spy)
     kill_on(paths, "all")
+    assert paths.held is not None
     held_add(paths, TOR_PROJECT)
+    first = paths.held.read_bytes()
     held_release(paths, TOR_PROJECT)
-    assert replaced == [
-        ("kill.tmp", "kill"),
-        ("held.txt.tmp", "held.txt"),
-        ("held.txt.tmp", "held.txt"),
-    ]
+    second = paths.held.read_bytes()
+    assert len(replaced) == 1 and replaced[0][1] == "kill"
+    assert replaced[0][0].startswith("kill.") and replaced[0][0].endswith(".tmp")
+    assert replaced[0][0] != "kill.tmp"  # a name nobody could have planted in advance
+    assert second.startswith(first) and len(second) > len(first)  # a line was added, none rewritten
     assert not list((paths.kill or Path()).parent.glob("*.tmp"))  # nothing is left behind
 
 
@@ -395,3 +401,66 @@ def test_stopping_needs_a_scope_and_only_one(home: Path) -> None:
         with pytest.raises(SystemExit) as caught:
             run(home, *words)
         assert caught.value.code == 2
+
+
+# --- review 3: commands that overlap, spelling, and odd profile names -----------------------------
+
+
+def test_stops_issued_at_the_same_moment_are_all_kept(paths: AdminPaths) -> None:
+    names = [f"profile-{n}" for n in range(12)]
+    barrier = threading.Barrier(len(names))
+    failures: list[BaseException] = []
+
+    def stop(name: str) -> None:
+        try:
+            barrier.wait()
+            kill_on(paths, "profile", name)
+        except BaseException as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=stop, args=(name,)) for name in names]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not failures
+    assert paths.kill is not None
+    assert sorted(parse_kill_file(paths.kill.read_text(encoding="utf-8")).profiles) == sorted(names)
+    assert not paths.kill.with_name("kill.lock").exists()  # the lock is always cleaned up
+
+
+def test_a_lock_left_by_a_killed_command_does_not_block_for_ever(paths: AdminPaths) -> None:
+    assert paths.kill is not None
+    lock = paths.kill.with_name("kill.lock")
+    lock.write_text("", encoding="utf-8")
+    old = lock.stat().st_mtime - 3600
+    os.utime(lock, (old, old))
+    assert kill_on(paths, "all") == "stopped: all"
+
+
+def test_a_lock_that_stays_is_reported_not_waited_on_for_ever(
+    paths: AdminPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert paths.kill is not None
+    paths.kill.with_name("kill.lock").write_text("", encoding="utf-8")
+    monkeypatch.setattr("onionglass.admin._LOCK_WAIT", 0.2)
+    with pytest.raises(AdminError, match="another command"):
+        kill_on(paths, "all")
+
+
+def test_resuming_finds_a_scope_written_by_hand_with_other_spacing(paths: AdminPaths) -> None:
+    assert paths.kill is not None
+    paths.kill.write_text(
+        f"onion    {TOR_PROJECT}.onion  # by hand\nprofile   Free\n", encoding="utf-8"
+    )
+    assert kill_off(paths, "onion", f"{TOR_PROJECT}.onion").startswith("resumed")
+    assert kill_off(paths, "profile", "Free").startswith("resumed")
+
+
+@pytest.mark.parametrize("name", ["free\nall", "a b", "a#b", "x\ty", "", "bad\x00name", "a\u200bb"])
+def test_a_profile_name_with_a_line_break_or_odd_characters_is_refused(
+    paths: AdminPaths, name: str
+) -> None:
+    with pytest.raises(AdminError, match="one word"):
+        kill_on(paths, "profile", name)
+    assert paths.kill is not None and not paths.kill.exists()

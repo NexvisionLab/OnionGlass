@@ -8,6 +8,8 @@ import hashlib
 from html.parser import HTMLParser
 from urllib.parse import quote, urlsplit
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from onionglass.onion import OnionOrigin, OnionUrl, parse_onion_url
 
 GATEWAY_DOMAIN = "gw.example"
@@ -147,3 +149,10 @@ def assert_safe_output(document: bytes, mapper: FakeMapper, *, allow_images: boo
             assert url.startswith("#") or mapper.owns(url), (
                 f"CSS reference outside the gateway: {url}"
             )
+
+
+def fresh_address() -> str:
+    """A well-formed version 3 onion address from a new key, one nobody runs."""
+    key = Ed25519PrivateKey.generate().public_key().public_bytes_raw()
+    checksum = hashlib.sha3_256(b".onion checksum" + key + b"").digest()[:2]
+    return base64.b32encode(key + checksum + b"").decode("ascii").lower()

@@ -9,6 +9,9 @@ The day is a UTC day, and counts start again at midnight UTC.
 ``LocalQuota`` is the built-in meter. With a file it keeps a journal that survives a restart, so
 restarting the gateway does not hand everyone a fresh allowance. If a meter cannot be read or
 written the gateway refuses the request, because an allowance nobody can count is no allowance.
+
+Taking an allowance is done in one step, ``reserve``, which checks and takes together. Checking
+first and taking later would let a burst of simultaneous requests all pass the check.
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
+
+from onionglass.files import append_line, tail_is_torn
 
 SECONDS_PER_DAY = 86_400
 MAX_JOURNAL_BYTES = 64_000_000
@@ -37,6 +42,26 @@ class QuotaMeter(Protocol):
     async def charge(self, subject: str, profile: str, units: int) -> int:
         """Add ``units`` to today's count and return the new total."""
         ...
+
+    async def reserve(self, subject: str, profile: str, units: int, limit: int) -> bool:
+        """Add ``units`` only if the total would stay within ``limit``, as one step.
+
+        Returns whether the units were taken.
+        """
+        ...
+
+
+def _record_of(line: str) -> tuple[int, str, str, int]:
+    record = json.loads(line)
+    return int(record["d"]), str(record["s"]), str(record["p"]), int(record["n"])
+
+
+def _is_record(line: str) -> bool:
+    try:
+        _record_of(line)
+    except (ValueError, KeyError, TypeError):
+        return False
+    return True
 
 
 class LocalQuota:
@@ -73,25 +98,23 @@ class LocalQuota:
             raise QuotaError(f"cannot read {self._path}: {exc.strerror}") from exc
         if len(data) > MAX_JOURNAL_BYTES:
             raise QuotaError(f"{self._path} is too large")
+        torn = tail_is_torn(data, _is_record)
+        lines = data.decode("utf-8", errors="replace").splitlines()
+        if torn:
+            lines = lines[:-1]  # a record cut off by a crash was never finished
         kept: list[str] = []
-        for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
+        for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
-                day, subject, profile, units = (
-                    int(record["d"]),
-                    str(record["s"]),
-                    str(record["p"]),
-                    int(record["n"]),
-                )
+                day, subject, profile, units = _record_of(line)
             except (ValueError, KeyError, TypeError) as exc:
                 raise QuotaError(f"{self._path}: line {number} is not a quota record") from exc
             if day == self._day:
                 key = (subject, profile)
                 self._used[key] = self._used.get(key, 0) + units
                 kept.append(line)
-        if len(kept) != len(data.splitlines()):
+        if torn or len(kept) != len(data.splitlines()):
             self._rewrite(kept)
 
     def _rewrite(self, lines: list[str]) -> None:
@@ -105,31 +128,37 @@ class LocalQuota:
         except OSError as exc:
             raise QuotaError(f"cannot write {self._path}: {exc.strerror}") from exc
 
-    def _append(self, line: str) -> None:
-        assert self._path is not None  # noqa: S101
-        descriptor = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(descriptor, "ab") as handle:
-            handle.write(line.encode("utf-8") + b"\n")
-            handle.flush()
-
     async def used(self, subject: str, profile: str) -> int:
         self._roll()
         return self._used.get((subject, profile), 0)
+
+    async def _add(self, subject: str, profile: str, units: int) -> int:
+        """Write the journal line, then count it. Called with the lock held."""
+        if units and self._path is not None:
+            line = json.dumps(
+                {"d": self._day, "s": subject, "p": profile, "n": units}, separators=(",", ":")
+            )
+            try:
+                await asyncio.to_thread(append_line, self._path, line, _is_record)
+            except OSError as exc:
+                raise QuotaError("the quota journal could not be written") from exc
+        key = (subject, profile)
+        self._used[key] = self._used.get(key, 0) + units
+        return self._used[key]
 
     async def charge(self, subject: str, profile: str, units: int) -> int:
         if units < 0:
             raise ValueError("units cannot be negative")
         async with self._lock:
             self._roll()
-            if units and self._path is not None:
-                line = json.dumps(
-                    {"d": self._day, "s": subject, "p": profile, "n": units},
-                    separators=(",", ":"),
-                )
-                try:
-                    await asyncio.to_thread(self._append, line)
-                except OSError as exc:
-                    raise QuotaError("the quota journal could not be written") from exc
-            key = (subject, profile)
-            self._used[key] = self._used.get(key, 0) + units
-            return self._used[key]
+            return await self._add(subject, profile, units)
+
+    async def reserve(self, subject: str, profile: str, units: int, limit: int) -> bool:
+        if units < 0:
+            raise ValueError("units cannot be negative")
+        async with self._lock:
+            self._roll()
+            if self._used.get((subject, profile), 0) + units > limit:
+                return False
+            await self._add(subject, profile, units)
+            return True

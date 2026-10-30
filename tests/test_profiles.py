@@ -256,7 +256,8 @@ def test_the_request_limit_is_per_session_and_clears_after_a_minute() -> None:
     one, two = team.visitor("limited"), team.visitor("limited", subject="v2")
     one.open()
     two.open()
-    assert [one.get().status_code for _ in range(3)] == [200, 200, 200]
+    # Opening the address was the first of the three requests the profile allows a minute.
+    assert [one.get().status_code for _ in range(2)] == [200, 200]
     slow = one.get()
     assert slow.status_code == 429 and "too quickly" in slow.text
     assert two.get().status_code == 200  # another session has its own allowance
@@ -273,7 +274,7 @@ def test_a_profile_without_a_limit_is_not_limited() -> None:
 
 def test_requests_that_are_refused_do_not_use_up_the_allowance() -> None:
     team = Team(
-        profiles={"two": Profile(name="two", allow_post_forms=False, max_requests_per_minute=2)}
+        profiles={"two": Profile(name="two", allow_post_forms=False, max_requests_per_minute=3)}
     )
     visitor = team.visitor("two")
     visitor.open()

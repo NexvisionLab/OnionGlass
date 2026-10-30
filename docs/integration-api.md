@@ -66,9 +66,9 @@ Every request body has `"v": 1`. Fields you do not know must be ignored, so that
 
 **`/policy`** receives `origin` (`scheme`, `address`, `host`, `port`), `profile`, `group`, `subject` and `action` (`open` or `fetch`). Reply `{"allow": true}` or `{"allow": false}`, and optionally `"rule"` (1 to 64 characters from letters, digits and `._:-`, recorded in the audit log and never shown to the visitor) and `"text_only": true` to allow a site but show it without images, fonts, forms, logins or uploads.
 
-**`/audit`** receives `{"event": {...}}` with `kind`, `action`, `rule`, `profile`, `group`, `subject`, `origin`, `path`, `status` and `time`. The path is empty unless the gateway is set to record full addresses. Reply `{"ok": true}`. Anything else makes the gateway refuse the request that the event describes, because nothing may happen that is not on record.
+**`/audit`** receives `{"event": {...}}` with `kind`, `action`, `rule`, `profile`, `group`, `subject`, `origin`, `path`, `status` and `time`. The site is named in the form the operator chose, the same as in the local log: `full` sends origin and path, `origin` (the default) sends the origin and an empty path, `hash` sends `h:` and a keyed hash with an empty path, and `none` sends an empty origin and path. Reply `{"ok": true}`. Anything else makes the gateway refuse the request that the event describes, because nothing may happen that is not on record.
 
-**`/quota/used`** receives `subject` and `profile` and replies `{"used": <whole number>}`. **`/quota/charge`** receives `subject`, `profile` and `units`, adds them to today's count, and replies with the new total in the same form.
+**`/quota/used`** receives `subject` and `profile` and replies `{"used": <whole number>}`. **`/quota/charge`** receives `subject`, `profile` and `units`, adds them to today's count, and replies with the new total in the same form. **`/quota/reserve`** receives `subject`, `profile`, `units` and `limit`. It must, as one step that no other request can come between, check that today's count plus `units` is not over `limit`, and if so add `units` and reply `{"ok": true, "used": <new total>}`, otherwise change nothing and reply `{"ok": false}`. The gateway uses it for opens, so that requests arriving together cannot overspend an allowance.
 
 ### Keeping answers
 

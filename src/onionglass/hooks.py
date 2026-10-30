@@ -55,9 +55,9 @@ import h11
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from onionglass.audit import AuditEvent
+from onionglass.audit import ADDRESS_FORMS, AddressForm, AuditEvent, in_address_form
 from onionglass.policy import Decision, PolicyRequest
-from onionglass.tickets import KeyRing
+from onionglass.tickets import KeyRing, is_valid_key_id
 
 HOOK_VERSION = 1
 REQUEST_CONTEXT = b"onionglass hook request v1\x00"
@@ -105,8 +105,17 @@ class HookTarget:
     prefix: str
 
 
+def _plain(text: str) -> bool:
+    """True if every character is a printable ASCII one other than a space."""
+    return all(0x21 <= ord(char) <= 0x7E for char in text)
+
+
 def parse_hook_url(url: str, *, allow_plain_http: bool = False) -> HookTarget:
     """Check a hook address. HTTPS is required, except to this machine or when allowed."""
+    if not _plain(url):  # urlsplit would quietly drop tabs and line breaks from inside it
+        raise ValueError(
+            "the hook address must be plain ASCII, with no spaces or control characters"
+        )
     try:
         parts = urlsplit(url)
         port = parts.port
@@ -120,9 +129,13 @@ def parse_hook_url(url: str, *, allow_plain_http: bool = False) -> HookTarget:
         raise ValueError(
             "a hook must use https, unless it is on this machine or plain http is allowed"
         )
+    if port == 0:
+        raise ValueError("the hook port cannot be 0")
+    if not _plain(parts.hostname):
+        raise ValueError("the hook host name must be plain ASCII")
     prefix = parts.path.rstrip("/")
-    if prefix and not prefix.isascii():
-        raise ValueError("the hook path must be ASCII")
+    if prefix and not _plain(prefix):
+        raise ValueError("the hook path must be plain ASCII, with no spaces or control characters")
     return HookTarget(
         parts.scheme, parts.hostname, port or (443 if parts.scheme == "https" else 80), prefix
     )
@@ -144,6 +157,8 @@ class HookClient:
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._target = parse_hook_url(url, allow_plain_http=allow_plain_http)
+        if not is_valid_key_id(key_id):
+            raise ValueError("the hook key id must be 1 to 32 letters, digits, - or _")
         self._key = signing_key
         self._key_id = key_id
         self._response_keys = response_keys
@@ -354,11 +369,27 @@ class HttpPolicy:
 class HttpAudit:
     """An audit sink that sends every event to a service, which must confirm it."""
 
-    def __init__(self, client: HookClient) -> None:
+    def __init__(
+        self,
+        client: HookClient,
+        *,
+        address_form: AddressForm = "origin",
+        salt: bytes | None = None,
+    ) -> None:
+        if address_form not in ADDRESS_FORMS:
+            raise ValueError(f"address form must be one of {ADDRESS_FORMS}")
         self._client = client
+        self._form = address_form
+        self._salt = salt or secrets.token_bytes(32)
+
+    @property
+    def address_form(self) -> AddressForm:
+        return self._form
 
     async def write(self, event: AuditEvent) -> None:
-        data = await self._client.call("/audit", {"event": asdict(event)})
+        """Send the event, naming the onion site only in the form the operator chose."""
+        shown = in_address_form(event, self._form, self._salt)
+        data = await self._client.call("/audit", {"event": asdict(shown)})
         if not _expect_bool(data, "ok"):
             raise HookError("the audit service did not accept the event")
 
@@ -378,3 +409,10 @@ class HttpQuota:
             "/quota/charge", {"subject": subject, "profile": profile, "units": units}
         )
         return _expect_count(data, "used")
+
+    async def reserve(self, subject: str, profile: str, units: int, limit: int) -> bool:
+        data = await self._client.call(
+            "/quota/reserve",
+            {"subject": subject, "profile": profile, "units": units, "limit": limit},
+        )
+        return _expect_bool(data, "ok")

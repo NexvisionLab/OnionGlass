@@ -19,14 +19,13 @@ import hashlib
 import hmac
 import json
 import logging
-import re
 import secrets
 import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote_plus, urlsplit
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -43,6 +42,7 @@ from onionglass.headers import (
     ACCEPT_HTML,
     apex_headers,
     document_headers,
+    multipart_boundary,
     normalise_multipart,
     parse_content_type,
     resource_headers,
@@ -88,14 +88,63 @@ class _Who:
     profile: str
 
 
-_FILE_PART = re.compile(rb"content-disposition:[^\r\n]*;\s*filename\*?\s*=", re.IGNORECASE)
+def _typed_address(text: str) -> OnionUrl | None:
+    """The address a visitor typed into the entry form, or None if it is not a usable one."""
+    text = text.strip()
+    if not text or len(text) > 2000:
+        return None
+    try:
+        return parse_onion_url(text if "://" in text else f"http://{text}")
+    except InvalidOnionError:
+        return None
+
+
+def _names_a_file(header_block: bytes) -> bool:
+    """True if a part's header lines name a file: ``filename`` or ``filename*`` as a parameter.
+
+    A plain scan for the word, with a look at what is on either side, done by position and never
+    by copying the text, so the time taken grows in step with the size of the block and a crafted
+    block cannot make it grow faster.
+    """
+    lowered = header_block.lower()
+    size = len(lowered)
+    position = lowered.find(b"filename")
+    while position != -1:
+        before = position - 1
+        while before >= 0 and lowered[before] in b" \t":
+            before -= 1
+        after = position + 8
+        while after < size and lowered[after] in b" \t":
+            after += 1
+        if before >= 0 and lowered[before] == 0x3B and after < size and lowered[after] in b"=*":
+            return True
+        position = lowered.find(b"filename", position + 8)
+    return False
 
 
 def _has_file_part(body: bytes, content_type: str | None) -> bool:
-    """True if a multipart body carries a file, whatever else it holds."""
+    """True if a multipart body carries a file, whatever else it holds.
+
+    Each part starts at a delimiter and its header lines end at the first blank line, so only
+    those lines are looked at, once each. A body that cannot be read as multipart counts as
+    having a file, because it cannot be shown not to.
+    """
     if content_type is None or parse_content_type(content_type)[0] != "multipart/form-data":
         return False
-    return _FILE_PART.search(body) is not None
+    boundary = multipart_boundary(content_type)
+    if boundary is None:
+        return True
+    delimiter = b"--" + boundary.encode("ascii")
+    start = body.find(delimiter)
+    while start != -1:
+        head_start = start + len(delimiter)
+        following = body.find(delimiter, head_start)
+        limit = len(body) if following == -1 else following
+        blank = body.find(b"\r\n\r\n", head_start, limit)
+        if _names_a_file(body[head_start : limit if blank == -1 else blank]):
+            return True
+        start = following
+    return False
 
 
 _HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
@@ -150,7 +199,10 @@ class Gateway:
         self._clock = clock
         self.store = store or InMemoryStore()
         self.labels = LabelBook(
-            self.store, ttl=settings.session_ttl, max_per_session=settings.max_labels_per_session
+            self.store,
+            ttl=settings.session_ttl,
+            max_per_session=settings.max_labels_per_session,
+            max_reserved=settings.max_opens_per_session,
         )
         self.jar = CookieJar(self.store, ttl=settings.session_ttl)
         self.verifier = (
@@ -291,6 +343,26 @@ class Gateway:
             return "quota_unavailable"
         return "quota_exhausted" if used + max(cost, 1) > limit else None
 
+    async def _reserve(self, who: _Who, profile: Profile, units: int) -> str | None:
+        """Take ``units`` from the allowance only if that leaves it within its limit.
+
+        The check and the taking are one step in the meter, so requests that arrive together
+        cannot all pass a check made before any of them was counted. None means it was taken.
+        """
+        limit = profile.daily_quota
+        meter = self.settings.quota
+        if limit is None or meter is None or units <= 0:
+            return None
+        try:
+            taken = await asyncio.wait_for(
+                meter.reserve(who.subject, profile.name, units, limit),
+                timeout=self.settings.hook_timeout,
+            )
+        except Exception:
+            _log.warning("the quota meter could not be written")
+            return "quota_unavailable"
+        return None if taken else "quota_exhausted"
+
     async def _charge(self, who: _Who, profile: Profile, units: int) -> bool:
         """Take ``units`` from the account's allowance. False means the meter failed."""
         meter = self.settings.quota
@@ -359,9 +431,11 @@ class Gateway:
         if not await self._record("allowed", who, origin, action, rule=verdict.rule, path=path):
             self.metrics.inc("refusals_total", reason="audit-unavailable")
             return _Verdict("audit_unavailable")
-        if not await self._charge(who, profile, cost):
-            await self._record("refused", who, origin, action, rule="quota-unavailable", path=path)
-            return _Verdict("quota_unavailable")
+        short = await self._reserve(who, profile, cost)
+        if short is not None:
+            rule = "quota" if short == "quota_exhausted" else "quota-unavailable"
+            await self._record("refused", who, origin, action, rule=rule, path=path)
+            return _Verdict(short)
         return verdict
 
     async def _admit(
@@ -488,10 +562,10 @@ class Gateway:
     # --- entry point -----------------------------------------------------------------------
 
     async def _handle(self, request: Request) -> Response:
+        host = request.headers.get("host", "")
         try:
             if len(request.headers.getlist("host")) > 1:
                 return self._error("bad_request")  # two Host headers: some servers read the other
-            host = request.headers.get("host", "")
             hosts = self.settings.hosts
             if hosts.is_apex(host):
                 return await self._handle_apex(request)
@@ -500,7 +574,9 @@ class Gateway:
                 return await self._handle_label(request, label)
             return self._error("not_found")
         except StoreFullError:
-            return self._error("internal")
+            # The shared store is full. That is a reason to ask people to wait, not a fault.
+            self.metrics.inc("refusals_total", reason="other")
+            return self._error("busy", apex=self.settings.hosts.is_apex(host))
         except Exception as exc:  # unexpected trouble must end in an error page, never a crash
             _log.warning("unexpected failure: %s", type(exc).__name__)
             return self._error("internal")
@@ -556,6 +632,19 @@ class Gateway:
             return self._error("bad_request", apex=True)
         return self._apex(pages.external_page(target), framed=True)
 
+    async def _too_many_opens(
+        self, session_id: str, profile: Profile, origin: OnionOrigin
+    ) -> Response | None:
+        """Opening is a request like any other: it counts against the profile's limit, and a
+        session can only type in so many addresses. Both are checked before anything is recorded
+        or charged."""
+        if not self._take_rate_slot(session_id, profile):
+            self.metrics.inc("refusals_total", reason="rate-limit")
+            return self._error("slow_down", apex=True)
+        if await self.labels.open_cap_reached(session_id, origin):
+            return self._error("session_limit", apex=True)
+        return None
+
     async def _open(self, request: Request) -> Response:
         if not self._same_origin(request):
             return self._error("forbidden", apex=True)
@@ -568,12 +657,7 @@ class Gateway:
         fields = parse_qs(
             raw.decode("ascii", errors="ignore"), keep_blank_values=True, max_num_fields=10
         )
-        text = (fields.get("address") or [""])[0].strip()
-        candidate = text if "://" in text else f"http://{text}"
-        try:
-            parsed = parse_onion_url(candidate) if text and len(text) <= 2000 else None
-        except InvalidOnionError:
-            parsed = None
+        parsed = _typed_address((fields.get("address") or [""])[0])
         if parsed is None:
             body = pages.landing_page(notice="That is not a valid version 3 onion address.")
             return self._apex(body, 400, form=True)
@@ -582,6 +666,10 @@ class Gateway:
         profile = self.settings.profile_named(who.profile)
         if profile is None:
             return self._error("unknown_profile", apex=True)
+        if existing is not None:
+            too_many = await self._too_many_opens(existing, profile, parsed.origin)
+            if too_many is not None:
+                return too_many
         refusal = await self._admit(who, profile, parsed.origin, "open", path=target, apex=True)
         if isinstance(refusal, Response):
             return refusal
@@ -591,10 +679,15 @@ class Gateway:
             )
         except _TooBusyError:
             return self._error("busy", apex=True)
+        if existing is None:
+            self._take_rate_slot(session_id, profile)  # this request is the session's first
         try:
             label = await self.labels.label_for(session_id, parsed.origin, reserved=True)
         except LabelError:
             return self._error("session_limit", apex=True)
+        await self.store.put(
+            f"seen:{session_id}:{parsed.origin.host.address}", "1", self.settings.session_ttl
+        )
         headers = apex_headers(self.settings.header_policy)
         headers["Location"] = self._viewer_url(label, parsed.path, parsed.query)
         response = Response(status_code=303, headers=headers)
@@ -638,6 +731,9 @@ class Gateway:
                 )
             except LabelError:
                 return self._error("session_limit", apex=True)
+            await self.store.put(
+                f"seen:{session_id}:{origin.host.address}", "1", self.settings.session_ttl
+            )
         headers = apex_headers(self.settings.header_policy)
         headers["Location"] = location
         response = Response(status_code=303, headers=headers)
@@ -792,9 +888,15 @@ class Gateway:
         if not self._take_rate_slot(session_id, profile):
             self.metrics.inc("refusals_total", reason="rate-limit")
             return self._error("slow_down")
-        admitted = await self._admit(who, profile, origin, "fetch", path=target)
+        # The first request to a site in a session is an open, however the visitor got there:
+        # typed in, or followed from a page. Only then does it count against the open allowance.
+        seen = f"seen:{session_id}:{origin.host.address}"
+        action = "fetch" if await self.store.get(seen) else "open"
+        admitted = await self._admit(who, profile, origin, action, path=target)
         if isinstance(admitted, Response):
             return admitted
+        if action == "open":
+            await self.store.put(seen, "1", self.settings.session_ttl)
         effective = profile.text_only() if admitted else profile
         if method == "POST" and not effective.allow_post_forms:
             await self._record("refused", who, origin, "fetch", rule="unrated:post", path=target)
@@ -917,7 +1019,9 @@ class Gateway:
             if destination in _NAVIGATION_DESTINATIONS
             else None
         )
-        return await self._deliver(session_id, page_url, method, response, profile, frame_url)
+        return await self._deliver(
+            session_id, page_url, method, response, profile, frame_url, sent=body
+        )
 
     async def _deliver(
         self,
@@ -927,6 +1031,7 @@ class Gateway:
         response: UpstreamResponse,
         profile: Profile,
         frame_url: str | None = None,
+        sent: bytes = b"",
     ) -> Response:
         settings = self.settings
         status = response.status if 200 <= response.status < 600 else 502
@@ -947,7 +1052,7 @@ class Gateway:
             if method == "HEAD":
                 return Response(b"", status, document_headers(policy))
             return await self._deliver_html(
-                session_id, page_url, body, charset, status, profile, frame_url
+                session_id, page_url, body, charset, status, profile, frame_url, sent
             )
         if media == "text/css":
             return await self._deliver_css(session_id, page_url, body, charset, status, profile)
@@ -993,6 +1098,7 @@ class Gateway:
         status: int,
         profile: Profile,
         frame_url: str | None = None,
+        sent: bytes = b"",
     ) -> Response:
         mapper = PlaceholderMapper(self.settings)
         options = HtmlOptions(
@@ -1010,7 +1116,7 @@ class Gateway:
         except (RewriteError, TimeoutError):
             self.metrics.inc("rewrite_failures_total")
             return self._error("rewrite_failed")
-        if await self._name_gate_hit(session_id, page_url, result.title, result.headings):
+        if await self._name_gate_hit(session_id, page_url, result.title, result.headings, sent):
             return self._error("denied")
         labels = await self._label_map(session_id, mapper)
         text = mapper.substitute(result.body.decode("utf-8"), labels)
@@ -1020,9 +1126,19 @@ class Gateway:
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
 
     async def _name_gate_hit(
-        self, session_id: str, page_url: OnionUrl, title: str, headings: tuple[str, ...]
+        self,
+        session_id: str,
+        page_url: OnionUrl,
+        title: str,
+        headings: tuple[str, ...],
+        sent: bytes = b"",
     ) -> bool:
-        """True if the page's title or headings are on the name list. The site is then held."""
+        """True if the page's title or headings are on the name list. The page is then refused.
+
+        The site is held only when the hit is not an echo of the request and enough different
+        accounts have met it. A search page that prints back what was typed would otherwise let
+        one visitor hold any site by asking it for a listed phrase.
+        """
         gate = self.settings.name_gate
         if gate is None or not gate.check(title, *headings):
             return False
@@ -1030,12 +1146,40 @@ class Gateway:
         origin = page_url.origin
         await self._record("refused", who, origin, "fetch", rule="name-gate", path=page_url.path)
         held = self.settings.held
-        if held is not None:
-            try:
-                await held.hold(origin.host.address, "name-gate")
-            except Exception:
-                _log.warning("the held list could not be written, the site is held in memory")
+        if held is None or gate.check(self._request_text(page_url, sent)):
+            return True  # a page that repeats the request is refused, but proves nothing
+        if not await self._enough_to_hold(origin.host.address, who.subject):
+            return True
+        try:
+            await held.hold(origin.host.address, "name-gate")
+        except Exception:
+            _log.warning("the held list could not be written, the site is held in memory")
         return True
+
+    @staticmethod
+    def _request_text(page_url: OnionUrl, sent: bytes) -> str:
+        """What the visitor sent, decoded twice so that encoding cannot hide an echo."""
+        raw = f"{page_url.path}?{page_url.query}" + " " + sent[:100_000].decode("latin-1")
+        return unquote_plus(unquote_plus(raw))
+
+    async def _enough_to_hold(self, address: str, subject: str) -> bool:
+        """Record that this account met a listed page here. True once enough different ones have.
+
+        In personal mode there is one visitor, so one hit is enough.
+        """
+        needed = 1 if self.settings.open_mode else self.settings.name_gate_hold_after
+        if needed <= 1:
+            return True
+        key = f"nghit:{address}"
+        mark = hashlib.sha256(f"{address}:{subject}".encode()).hexdigest()[:16]
+        seen = [m for m in (await self.store.get(key) or "").split(",") if m]
+        if mark not in seen:
+            seen.append(mark)
+            try:
+                await self.store.put(key, ",".join(seen[:needed]), 7 * 86_400)
+            except StoreFullError:
+                return False
+        return len(set(seen)) >= needed
 
     async def _deliver_css(
         self,

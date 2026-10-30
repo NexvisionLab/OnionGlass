@@ -7,8 +7,10 @@ ClientOnly 1
 
 # Every visitor session presents its own SOCKS credentials, and Tor keeps connections with
 # different credentials on different circuits. ExtendedErrors makes Tor say why an onion site
-# could not be reached, which the gateway turns into a readable message.
-SocksPort 0.0.0.0:9050 IsolateSOCKSAuth IsolateClientAddr ExtendedErrors
+# could not be reached, which the gateway turns into a readable message. OnionTrafficOnly makes
+# Tor refuse any request that is not for an onion address, so nothing that gets hold of this
+# port can use it to leave through an exit relay.
+SocksPort 0.0.0.0:9050 IsolateSOCKSAuth IsolateClientAddr ExtendedErrors OnionTrafficOnly
 SocksPolicy accept *
 
 DataDirectory /var/lib/tor

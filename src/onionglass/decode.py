@@ -24,6 +24,8 @@ class DecodeError(Exception):
 
 
 def _inflate(data: bytes, window: int, max_output: int) -> bytes:
+    if max_output < 1:
+        raise DecodeError("too_large")  # zero would mean no limit to zlib
     decompressor = zlib.decompressobj(window)
     output = decompressor.decompress(data, max_output + 1)
     if len(output) > max_output or decompressor.unconsumed_tail:

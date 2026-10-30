@@ -17,6 +17,8 @@ from onionglass.quota import QuotaMeter
 from onionglass.reports import ReportQueue
 from onionglass.tickets import KeyRing
 
+MAX_PROFILE_BYTES = 1_000_000_000
+MAX_REWRITE_TIMEOUT = 300.0
 _COOKIE_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
 
@@ -45,11 +47,30 @@ class Profile:
             raise ValueError("the request limit must be at least 1")
         if self.open_cost < 0 or self.page_cost < 0:
             raise ValueError("costs cannot be negative")
+        self._check_numbers()
         if self.daily_quota is not None:
             if self.daily_quota < 1:
                 raise ValueError("the daily quota must be at least 1")
             if self.open_cost == 0 and self.page_cost == 0:
                 raise ValueError("a daily quota needs a cost, or nothing ever uses it up")
+
+    def _check_numbers(self) -> None:
+        """The sizes and times must be above zero, since zero or less can switch a cap off."""
+        for label, number in (
+            ("max_page_bytes", self.max_page_bytes),
+            ("max_asset_bytes", self.max_asset_bytes),
+        ):
+            if number < 1:
+                raise ValueError(f"{label} must be at least 1")
+            if number > MAX_PROFILE_BYTES:
+                raise ValueError(f"{label} is too large")
+        if self.rewrite_timeout <= 0:
+            raise ValueError("rewrite_timeout must be above zero")
+        largest = max(
+            self.open_cost, self.page_cost, self.max_requests_per_minute or 0, self.daily_quota or 0
+        )
+        if self.rewrite_timeout > MAX_REWRITE_TIMEOUT or largest > 10**9:
+            raise ValueError("a limit, cost or quota is too large")
 
     def text_only(self) -> Profile:
         """This profile with everything risky turned off, for sites nobody has rated."""
@@ -94,6 +115,7 @@ class Settings:
     max_new_sessions_per_minute: int = 30
     max_concurrent_fetches: int = 32
     max_fetches_per_session: int = 6
+    max_opens_per_session: int = 100
     keys: KeyRing | None = None
     open_mode: bool = False
     policy: Policy | None = None
@@ -106,6 +128,7 @@ class Settings:
     metrics_token: str | None = None
     name_gate: NameGate | None = None
     hook_timeout: float = 2.0
+    name_gate_hold_after: int = 2
 
     def profile_named(self, name: str) -> Profile | None:
         """The profile a session was given, or None if this gateway does not have it."""
@@ -113,7 +136,34 @@ class Settings:
             return self.profile
         return self.profiles.get(name)
 
+    def _check_limits(self) -> None:
+        """Every limit must be above zero and sane. A zero or negative one would either stop the
+        gateway or, worse, switch a protection off."""
+        counts = {
+            "max_labels_per_session": self.max_labels_per_session,
+            "max_labels_per_page": self.max_labels_per_page,
+            "max_opens_per_session": self.max_opens_per_session,
+            "max_new_sessions_per_minute": self.max_new_sessions_per_minute,
+            "max_concurrent_fetches": self.max_concurrent_fetches,
+            "max_fetches_per_session": self.max_fetches_per_session,
+            "max_request_body": self.max_request_body,
+            "max_reports_per_session": self.max_reports_per_session,
+            "name_gate_hold_after": self.name_gate_hold_after,
+        }
+        for label, number in counts.items():
+            if number < 1:
+                raise ValueError(f"{label} must be at least 1")
+        if self.max_concurrent_fetches > 1000 or self.max_request_body > 100_000_000:
+            raise ValueError("a limit is too large")
+        if any(n > 10_000_000 for n in counts.values() if n != self.max_request_body):
+            raise ValueError("a limit is too large")
+        if not 0 < self.session_ttl <= 30 * 86_400:
+            raise ValueError("the session lifetime must be above zero and at most 30 days")
+        if not 0 < self.hook_timeout <= 60:
+            raise ValueError("hook_timeout must be above zero and at most 60 seconds")
+
     def __post_init__(self) -> None:
+        self._check_limits()
         if self.metrics_token is not None and (
             len(self.metrics_token) < 16
             or not self.metrics_token.isascii()

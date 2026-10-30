@@ -79,7 +79,7 @@ def _b64url_decode(text: str) -> bytes:
     return data
 
 
-def _valid_key_id(key_id: str) -> bool:
+def is_valid_key_id(key_id: str) -> bool:
     return 1 <= len(key_id) <= 32 and set(key_id) <= _KEY_ID_CHARS
 
 
@@ -99,7 +99,7 @@ class KeyRing:
         self._keys: dict[str, Ed25519PublicKey] = {}
 
     def add(self, key_id: str, public_key: Ed25519PublicKey | bytes) -> None:
-        if not _valid_key_id(key_id):
+        if not is_valid_key_id(key_id):
             raise ValueError("invalid key id")
         if isinstance(public_key, bytes):
             public_key = Ed25519PublicKey.from_public_bytes(public_key)
@@ -127,7 +127,7 @@ class TicketIssuer:
         *,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        if not _valid_key_id(key_id):
+        if not is_valid_key_id(key_id):
             raise ValueError("invalid key id")
         self._key = private_key
         self._key_id = key_id
@@ -246,7 +246,7 @@ class TicketVerifier:
         if len(parts) != 4 or parts[0] != FORMAT_PREFIX:
             raise TicketError("malformed")
         _, key_id, payload_text, signature_text = parts
-        if not _valid_key_id(key_id):
+        if not is_valid_key_id(key_id):
             raise TicketError("malformed")
         payload = _b64url_decode(payload_text)
         signature = _b64url_decode(signature_text)

@@ -16,13 +16,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from onionglass.files import append_line, tail_is_torn
 from onionglass.held import HeldList
 
 _log = logging.getLogger("onionglass.reports")
@@ -33,6 +33,19 @@ MAX_SUBJECT = 200
 
 class ReportError(Exception):
     """The report file could not be read or written."""
+
+
+def _report_of(line: str) -> tuple[str, str]:
+    record = json.loads(line)
+    return str(record["address"]), str(record["subject"])
+
+
+def _is_report(line: str) -> bool:
+    try:
+        _report_of(line)
+    except (ValueError, KeyError, TypeError):
+        return False
+    return True
 
 
 class ReportQueue:
@@ -66,21 +79,17 @@ class ReportQueue:
             raise ReportError(f"cannot read {self._path}: {exc.strerror}") from exc
         if len(data) > MAX_FILE_BYTES:
             raise ReportError(f"{self._path} is too large")
-        for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
+        lines = data.decode("utf-8", errors="replace").splitlines()
+        if tail_is_torn(data, _is_report):
+            lines = lines[:-1]  # a report cut off by a crash was never finished
+        for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
-                address, subject = str(record["address"]), str(record["subject"])
+                address, subject = _report_of(line)
             except (ValueError, KeyError, TypeError) as exc:
                 raise ReportError(f"{self._path}: line {number} is not a report") from exc
             self._reporters.setdefault(address, set()).add(subject)
-
-    def _append(self, line: str) -> None:
-        descriptor = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(descriptor, "ab") as handle:
-            handle.write(line.encode("utf-8") + b"\n")
-            handle.flush()
 
     def reporters_of(self, address: str) -> int:
         """How many different visitors have reported this address."""
@@ -108,7 +117,7 @@ class ReportQueue:
                 separators=(",", ":"),
             )
             try:
-                await asyncio.to_thread(self._append, line)
+                await asyncio.to_thread(append_line, self._path, line, _is_report)
             except OSError as exc:
                 raise ReportError("the report could not be recorded") from exc
             self._reporters.setdefault(address, set()).add(who)

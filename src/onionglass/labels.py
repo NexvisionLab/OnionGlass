@@ -56,17 +56,31 @@ class LabelBook:
     """Creates labels for (session, onion) pairs and resolves them back."""
 
     def __init__(
-        self, store: SessionStore, *, ttl: float, max_per_session: int | None = None
+        self,
+        store: SessionStore,
+        *,
+        ttl: float,
+        max_per_session: int | None = None,
+        max_reserved: int | None = None,
     ) -> None:
         self._store = store
         self._ttl = ttl
         self._max_per_session = max_per_session
+        self._max_reserved = max_reserved
 
     async def peek(self, session_id: str, origin: OnionOrigin) -> str | None:
         """The label this session already has for the origin, without making one."""
         if not is_valid_session_id(session_id):
             return None
         return await self._store.get(f"lbl:{session_id}:{origin.key}")
+
+    async def open_cap_reached(self, session_id: str, origin: OnionOrigin) -> bool:
+        """True if this session has typed in as many addresses as it may and this one is new."""
+        if self._max_reserved is None or not is_valid_session_id(session_id):
+            return False
+        if await self._store.get(f"lbl:{session_id}:{origin.key}") is not None:
+            return False
+        return int(await self._store.get(f"lblopen:{session_id}") or 0) >= self._max_reserved
 
     async def label_for(
         self, session_id: str, origin: OnionOrigin, *, reserved: bool = False
@@ -85,13 +99,21 @@ class LabelBook:
         # for links, but not for what the visitor opens themselves.
         if not reserved and self._max_per_session is not None and used >= self._max_per_session:
             raise LabelError("too many sites in this session")
+        # Typed addresses are not held back by a hostile page, but they have a cap of their own,
+        # so one visitor typing endless addresses cannot fill the store for everyone.
+        reserved_key = f"lblopen:{session_id}"
+        opened = int(await self._store.get(reserved_key) or 0)
+        if reserved and self._max_reserved is not None and opened >= self._max_reserved:
+            raise LabelError("too many addresses opened in this session")
         reverse_value = json.dumps([session_id, origin.key], separators=(",", ":"))
         for _ in range(_ATTEMPTS):
             candidate = new_label()
             if not await self._store.add_if_absent(f"rev:{candidate}", reverse_value, self._ttl):
                 continue
             if await self._store.add_if_absent(forward_key, candidate, self._ttl):
-                if not reserved:
+                if reserved:
+                    await self._store.put(reserved_key, str(opened + 1), self._ttl)
+                else:
                     await self._store.put(count_key, str(used + 1), self._ttl)
                 return candidate
             # Another request created a label for this pair first. Use theirs.

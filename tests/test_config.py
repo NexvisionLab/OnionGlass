@@ -618,3 +618,41 @@ def test_the_ticket_command_refuses_bad_input(
     command[command.index("--key-file") + 1] = str(layout.root / "missing.pem")
     assert cli.main(command) == 2
     assert capsys.readouterr().err.count("onionglass:") == 3
+
+
+@pytest.mark.parametrize("form", ["full", "origin", "hash", "none"])
+def test_the_form_in_which_the_audit_service_is_told_the_site_is_read(
+    layout: Layout, form: str
+) -> None:
+    layout.config.write_text(without_sections(layout.text(), "policy", "audit"), encoding="utf-8")
+    add_hooks(layout, use='["audit"]', extra=f'audit_address_form = "{form}"')
+    audit = load_config(layout.config).settings.audit
+    assert isinstance(audit, HttpAudit) and audit.address_form == form
+
+
+def test_the_audit_service_is_told_the_origin_only_unless_the_operator_says_otherwise(
+    layout: Layout,
+) -> None:
+    layout.config.write_text(without_sections(layout.text(), "policy", "audit"), encoding="utf-8")
+    add_hooks(layout, use='["audit"]')
+    audit = load_config(layout.config).settings.audit
+    assert isinstance(audit, HttpAudit) and audit.address_form == "origin"
+
+
+def test_an_unknown_audit_form_for_the_audit_service_is_refused(layout: Layout) -> None:
+    layout.config.write_text(without_sections(layout.text(), "policy", "audit"), encoding="utf-8")
+    add_hooks(layout, use='["audit"]', extra='audit_address_form = "all"')
+    with pytest.raises(ConfigError, match="audit_address_form"):
+        load_config(layout.config)
+
+
+def test_a_short_salt_for_the_audit_service_is_refused(layout: Layout) -> None:
+    layout.config.write_text(without_sections(layout.text(), "policy", "audit"), encoding="utf-8")
+    secret(layout.root / "secrets" / "audit.salt", b"short")
+    add_hooks(
+        layout,
+        use='["audit"]',
+        extra='audit_address_form = "hash"\naudit_salt_file = "secrets/audit.salt"',
+    )
+    with pytest.raises(ConfigError, match="audit_salt_file"):
+        load_config(layout.config)

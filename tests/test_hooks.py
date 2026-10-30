@@ -9,6 +9,7 @@ in a refusal by the gateway.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import ssl
 import time
@@ -470,6 +471,12 @@ class Service:
             self.events.append(payload["event"])
             return {"ok": True}
         key = (payload["subject"], payload["profile"])
+        if path == "/quota/reserve":
+            used = self.used.get(key, 0)
+            if used + payload["units"] > payload["limit"]:
+                return {"ok": False, "used": used}
+            self.used[key] = used + payload["units"]
+            return {"ok": True, "used": self.used[key]}
         if path == "/quota/charge":
             self.used[key] = self.used.get(key, 0) + payload["units"]
         return {"used": self.used.get(key, 0)}
@@ -544,3 +551,90 @@ def test_quotas_can_live_in_the_outside_service(service: Service) -> None:
     assert service.used[("alice", "daily")] == 2
     service.server.mode = "status500"
     assert team.visitor("daily", subject="bob").open() == 503  # the meter cannot be trusted
+
+
+# --- review 3: what the audit service is told, how a quota is taken, which addresses are valid -----
+
+
+@pytest.mark.parametrize(
+    ("form", "origin", "path"),
+    [
+        ("full", f"http://{TOR_PROJECT}.onion:80", "/x"),
+        ("origin", f"http://{TOR_PROJECT}.onion:80", ""),
+        ("none", "", ""),
+    ],
+)
+def test_the_audit_service_is_told_the_site_only_in_the_chosen_form(
+    server: HookServer, form: Any, origin: str, path: str
+) -> None:
+    server.handler = lambda _p, _d: {"ok": True}
+    asyncio.run(HttpAudit(make_client(server), address_form=form).write(an_event()))
+    sent = server.seen[0].payload["event"]
+    assert (sent["origin"], sent["path"]) == (origin, path)
+
+
+def test_the_audit_service_gets_a_keyed_hash_never_the_address_when_hashing(
+    server: HookServer,
+) -> None:
+    server.handler = lambda _p, _d: {"ok": True}
+    audit = HttpAudit(make_client(server), address_form="hash", salt=b"s" * 32)
+    asyncio.run(audit.write(an_event()))
+    asyncio.run(audit.write(an_event(path="/other")))
+    first, second = (seen.payload["event"] for seen in server.seen)
+    assert first["origin"].startswith("h:") and TOR_PROJECT not in json.dumps(first)
+    assert first["origin"] == second["origin"] and first["path"] == second["path"] == ""
+
+
+def test_the_audit_service_default_is_the_origin_without_the_path(server: HookServer) -> None:
+    server.handler = lambda _p, _d: {"ok": True}
+    asyncio.run(HttpAudit(make_client(server)).write(an_event(path="/secret/page?q=1")))
+    assert server.seen[0].payload["event"]["path"] == ""
+
+
+def test_an_unknown_audit_address_form_is_refused(server: HookServer) -> None:
+    with pytest.raises(ValueError, match="address form"):
+        HttpAudit(make_client(server), address_form="everything")  # type: ignore[arg-type]
+
+
+def test_a_quota_reserve_asks_the_service_to_check_and_take_in_one_step(
+    server: HookServer,
+) -> None:
+    quota = HttpQuota(make_client(server))
+    server.handler = lambda _p, _d: {"ok": True, "used": 4}
+    assert asyncio.run(quota.reserve("alice", "analyst", 2, 5)) is True
+    assert server.seen[-1].path == "/quota/reserve"
+    assert server.seen[-1].payload == {
+        "v": 1, "subject": "alice", "profile": "analyst", "units": 2, "limit": 5
+    }  # fmt: skip
+    server.handler = lambda _p, _d: {"ok": False}
+    assert asyncio.run(quota.reserve("alice", "analyst", 2, 5)) is False
+    for bad in ({}, {"ok": "yes"}, {"ok": None}, {"ok": 1}):
+        server.handler = answering(bad)
+        with pytest.raises(HookError):
+            asyncio.run(quota.reserve("alice", "analyst", 2, 5))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://hooks.example:0/",
+        "https://h\N{LATIN SMALL LETTER O WITH DIAERESIS}oks.example/",
+        "https://hooks.example/a b",
+        "https://hooks.example/a\tb",
+        "https://hooks.example/a\x7fb",
+        "https://hooks.example/caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+    ],
+)
+def test_a_hook_address_with_a_zero_port_or_odd_characters_is_refused(url: str) -> None:
+    with pytest.raises(ValueError, match="hook"):
+        parse_hook_url(url)
+
+
+@pytest.mark.parametrize(
+    "key_id", ["", "k" * 33, "k\N{LATIN SMALL LETTER E WITH ACUTE}", "a b", "a\nb"]
+)
+def test_a_hook_key_id_that_cannot_be_sent_is_refused_when_the_client_is_made(
+    server: HookServer, key_id: str
+) -> None:
+    with pytest.raises(ValueError, match="key id"):
+        make_client(server, key_id=key_id)

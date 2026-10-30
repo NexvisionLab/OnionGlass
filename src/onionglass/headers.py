@@ -241,6 +241,20 @@ def _request_content_type(value: str) -> str:
     raise ValueError("multipart request has no valid boundary")
 
 
+def multipart_boundary(content_type: str | None) -> str | None:
+    """The boundary of a multipart form body, or None if it has none the gateway will accept."""
+    if content_type is None or parse_content_type(content_type)[0] != "multipart/form-data":
+        return None
+    boundary = ""
+    for piece in content_type.split(";")[1:]:
+        name, _, parameter = piece.strip().partition("=")
+        if name.strip().lower() == "boundary":
+            boundary = parameter.strip().strip('"')
+    if not 1 <= len(boundary) <= 70 or not set(boundary) <= _BOUNDARY_CHARS:
+        return None
+    return boundary
+
+
 def normalise_multipart(body: bytes, content_type: str | None) -> tuple[bytes, str | None]:
     """Give a multipart body a fresh boundary of the kind Tor Browser makes.
 

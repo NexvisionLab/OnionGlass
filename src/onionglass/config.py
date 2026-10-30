@@ -238,6 +238,14 @@ def _profile(reader: _Reader, table: Mapping[str, Any], where: str, name: str | 
         raise ConfigError(f"{where}: {exc}") from exc
 
 
+def _salt(reader: _Reader, file: str, where: str) -> bytes:
+    """The secret that keys the hashed form of an address in the audit log."""
+    salt = _secret_bytes(reader.path(file), where).strip()
+    if len(salt) < 16:
+        raise ConfigError(f"{where} must hold at least 16 bytes")
+    return salt
+
+
 def _audit(reader: _Reader) -> AuditSink | None:
     table = reader.table("audit", {"file", "address_form", "salt_file"})
     if not table:
@@ -249,11 +257,7 @@ def _audit(reader: _Reader) -> AuditSink | None:
     if form not in ADDRESS_FORMS:
         raise ConfigError(f"[audit].address_form must be one of {', '.join(ADDRESS_FORMS)}")
     salt_file = _get(table, "salt_file", str, "[audit]")
-    salt = None
-    if salt_file:
-        salt = _secret_bytes(reader.path(salt_file), "[audit].salt_file").strip()
-        if len(salt) < 16:
-            raise ConfigError("[audit].salt_file must hold at least 16 bytes")
+    salt = _salt(reader, salt_file, "[audit].salt_file") if salt_file else None
     return JsonLinesAudit(
         _writable_folder(reader.path(file), "[audit]"),
         address_form=form,
@@ -266,7 +270,7 @@ def _hooks(reader: _Reader, timeout: float) -> tuple[HookClient | None, dict[str
         "hooks",
         {
             "url", "key_id", "signing_key_file", "response_keys", "use", "cache_seconds",
-            "allow_plain_http", "timeout",
+            "allow_plain_http", "timeout", "audit_address_form", "audit_salt_file",
         },
     )  # fmt: skip
     if not table:
@@ -294,7 +298,12 @@ def _hooks(reader: _Reader, timeout: float) -> tuple[HookClient | None, dict[str
     cache = _number(table, "cache_seconds", "[hooks]")
     if cache is not None and cache < 0:
         raise ConfigError("[hooks].cache_seconds cannot be negative")
-    return client, {"use": set(uses), "cache": cache or 0.0}
+    form = _get_or(table, "audit_address_form", str, "[hooks]", "origin")
+    if form not in ADDRESS_FORMS:
+        raise ConfigError(f"[hooks].audit_address_form must be one of {', '.join(ADDRESS_FORMS)}")
+    salt_file = _get(table, "audit_salt_file", str, "[hooks]")
+    salt = _salt(reader, salt_file, "[hooks].audit_salt_file") if salt_file else None
+    return client, {"use": set(uses), "cache": cache or 0.0, "audit_form": form, "audit_salt": salt}
 
 
 def _build_hook_parts(client: HookClient | None, hook: dict[str, Any]) -> dict[str, Any]:
@@ -305,7 +314,7 @@ def _build_hook_parts(client: HookClient | None, hook: dict[str, Any]) -> dict[s
     if "policy" in uses:
         parts["policy"] = HttpPolicy(client, cache_seconds=hook["cache"])
     if "audit" in uses:
-        parts["audit"] = HttpAudit(client)
+        parts["audit"] = HttpAudit(client, address_form=hook["audit_form"], salt=hook["audit_salt"])
     if "quota" in uses:
         parts["quota"] = HttpQuota(client)
     return parts
@@ -335,8 +344,10 @@ def _writable_folder(path: Path, where: str) -> Path:
     return path
 
 
-def _single_path(reader: _Reader, section: str, *, writes: bool = False) -> Path | None:
-    table = reader.table(section, {"file"})
+def _single_path(
+    reader: _Reader, section: str, *, writes: bool = False, extra: frozenset[str] = frozenset()
+) -> Path | None:
+    table = reader.table(section, {"file"} | extra)
     file = _get(table, "file", str, f"[{section}]") if table else None
     if table and not file:
         raise ConfigError(f"[{section}] needs a file")
@@ -422,14 +433,14 @@ def _limits(reader: _Reader) -> dict[str, Any]:
         {
             "session_hours", "max_labels_per_session", "max_labels_per_page",
             "max_new_sessions_per_minute", "max_concurrent_fetches", "max_fetches_per_session",
-            "max_request_body", "max_reports_per_session", "hook_timeout",
+            "max_request_body", "max_reports_per_session", "hook_timeout", "max_opens_per_session",
         },
     )  # fmt: skip
     found: dict[str, Any] = {}
     for key in (
         "max_labels_per_session", "max_labels_per_page", "max_new_sessions_per_minute",
         "max_concurrent_fetches", "max_fetches_per_session", "max_request_body",
-        "max_reports_per_session",
+        "max_reports_per_session", "max_opens_per_session",
     ):  # fmt: skip
         value = _get(table, key, int, "[limits]")
         if value is not None:
@@ -482,12 +493,15 @@ def _safety_files(reader: _Reader) -> dict[str, Any]:
     """The kill file, held list, name gate, report queue and metrics token."""
     kill_file = _single_path(reader, "kill")
     held_file = _single_path(reader, "held", writes=True)
-    names_file = _single_path(reader, "names")
+    names_file = _single_path(reader, "names", extra=frozenset({"hold_after"}))
     held = HeldList(held_file) if held_file else None
     found: dict[str, Any] = {
         "kill": KillSwitch(kill_file) if kill_file else None,
         "held": held,
         "name_gate": load_name_gate(names_file) if names_file else None,
+        "name_gate_hold_after": _get_or(
+            reader.table("names", {"file", "hold_after"}), "hold_after", int, "[names]", 2
+        ),
         "reports": None,
         "metrics_token": None,
     }

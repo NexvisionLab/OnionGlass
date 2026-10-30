@@ -22,7 +22,7 @@ import json
 import os
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -70,6 +70,22 @@ def _clip(value: str) -> str:
     return value[:MAX_FIELD]
 
 
+def in_address_form(event: AuditEvent, form: AddressForm, salt: bytes) -> AuditEvent:
+    """The event with the onion site named only as the operator chose.
+
+    ``full`` keeps the path, ``origin`` drops it, ``hash`` replaces the whole address with a keyed
+    hash that is stable for one salt, and ``none`` leaves no trace of the site at all.
+    """
+    if form == "full":
+        return event
+    if form == "origin":
+        return replace(event, path="")
+    if form == "hash":
+        digest = hmac.new(salt, event.origin.encode("utf-8"), hashlib.sha256)
+        return replace(event, origin="h:" + digest.hexdigest()[:16], path="")
+    return replace(event, origin="", path="")
+
+
 class JsonLinesAudit:
     """Appends one JSON object per line to a file.
 
@@ -105,13 +121,9 @@ class JsonLinesAudit:
             "subject": _clip(event.subject),
             "status": event.status,
         }
-        if self._form == "full":
-            record["target"] = _clip(event.origin) + event.path[:1000]
-        elif self._form == "origin":
-            record["target"] = _clip(event.origin)
-        elif self._form == "hash":
-            digest = hmac.new(self._salt, event.origin.encode("utf-8"), hashlib.sha256)
-            record["target"] = "h:" + digest.hexdigest()[:16]
+        shown = in_address_form(event, self._form, self._salt)
+        if self._form != "none":
+            record["target"] = _clip(shown.origin) + shown.path[:1000]
         return json.dumps(record, separators=(",", ":"), sort_keys=True)
 
     def _append(self, line: str) -> None:

@@ -70,3 +70,28 @@ jobs:
 
       - name: Audit installed packages
         run: pip-audit
+
+  images:
+    name: Container images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the compose file
+        run: docker compose config --quiet
+
+      - name: Build the gateway image
+        run: docker build --tag onionglass-gateway .
+
+      - name: Build the Tor image
+        run: docker build --tag onionglass-tor ./tor
+
+      - name: The gateway image refuses to listen on a public address outside a container
+        run: |
+          set +e
+          docker run --rm --env ONIONGLASS_IN_CONTAINER=0 onionglass-gateway --host 0.0.0.0
+          test "$?" -eq 2

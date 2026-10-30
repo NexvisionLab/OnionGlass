@@ -1,0 +1,68 @@
+# Personal mode with containers: Tor, the gateway and a small proxy.
+#
+#   docker compose up --build
+#   then open http://localhost:8080/
+#
+# Only the proxy is published, and only on this machine's loopback address. The gateway sits on a
+# private network with no route to the internet; only Tor can go out.
+
+services:
+  tor:
+    build: ./tor
+    restart: unless-stopped
+    networks: [private, egress]
+    volumes:
+      - tor-data:/var/lib/tor
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    pids_limit: 256
+
+  gateway:
+    build: .
+    restart: unless-stopped
+    depends_on: [tor]
+    networks: [private]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 200
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [gateway]
+    networks: [private, frontend]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    read_only: true
+    tmpfs:
+      - /data
+      - /config
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    pids_limit: 100
+
+networks:
+  # The gateway and Tor talk here. Nothing on this network can reach the internet.
+  private:
+    internal: true
+  # Tor's way out to the Tor network.
+  egress: {}
+  # The proxy's way to publish its port on this machine.
+  frontend: {}
+
+volumes:
+  tor-data: {}

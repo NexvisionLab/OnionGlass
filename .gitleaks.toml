@@ -2,3 +2,9 @@ title = "onionglass secret scan"
 
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "The Tor Project's public package signing key fingerprint. It is published, not secret."
+condition = "AND"
+paths = ['''tor/Dockerfile''']
+regexes = ['''A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89''']

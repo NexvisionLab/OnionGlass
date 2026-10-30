@@ -35,6 +35,31 @@ def test_personal_mode_refuses_to_listen_beyond_this_machine(
     assert "only listens on this machine" in capsys.readouterr().err
 
 
+def test_listening_on_all_addresses_is_only_allowed_inside_the_container_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ONIONGLASS_IN_CONTAINER", raising=False)
+    assert main(["--host", "0.0.0.0"]) == 2  # noqa: S104
+    monkeypatch.setenv("ONIONGLASS_IN_CONTAINER", "0")
+    assert main(["--host", "0.0.0.0"]) == 2  # noqa: S104
+    monkeypatch.setenv("ONIONGLASS_IN_CONTAINER", "1")
+    started: dict[str, object] = {}
+
+    def fake_run(app: object, **kwargs: object) -> None:
+        started.update(kwargs)
+
+    monkeypatch.setattr("onionglass.cli.uvicorn.run", fake_run)
+    assert main(["--host", "0.0.0.0", "--port", "8080", "--public-port", "9090"]) == 0  # noqa: S104
+    assert started["host"] == "0.0.0.0"  # noqa: S104
+    assert started["access_log"] is False
+    # Even in a container, only that one wildcard address is accepted.
+    assert main(["--host", "192.0.2.10"]) == 2
+
+
+def test_the_address_the_browser_uses_decides_the_gateways_own_port() -> None:
+    assert build_gateway(port=9090).settings.port == 9090
+
+
 def test_a_bad_port_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--port", "0"]) == 2
     assert main(["--port", "70000"]) == 2

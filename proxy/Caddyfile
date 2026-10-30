@@ -1,0 +1,10 @@
+# A plain reverse proxy in front of the gateway, so the gateway itself never needs a route to the
+# outside. It forwards every host name, because each onion is served from its own label host.
+{
+	auto_https off
+	admin off
+}
+
+:8080 {
+	reverse_proxy gateway:8080
+}

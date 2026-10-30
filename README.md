@@ -2,7 +2,7 @@
 
 A self-hostable gateway that lets you open `.onion` sites in an ordinary browser, safely, and capture what you see as evidence.
 
-> **Status: pre-alpha.** Nothing here works yet. This repository currently holds the project foundations: licence, security policy, threat model and build checks. Do not deploy it.
+> **Status: pre-alpha.** Personal mode works: you can open onion sites in your own browser, on your own machine, through your own Tor. Evidence capture, policy and profiles, team and public modes, and the full remote browser are not built yet, and it has not had an independent security test. Do not run it as a service for other people. See [Running onionglass](docs/running.md).
 
 ## What it is for
 
@@ -41,6 +41,7 @@ Onion sites can host illegal and harmful material. The project includes blocklis
 
 ## Documentation
 
+- [Running onionglass](docs/running.md)
 - [Threat model](docs/threat-model.md)
 - [Architecture](docs/architecture.md)
 - [Integration API](docs/integration-api.md)

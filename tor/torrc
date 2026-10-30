@@ -1,0 +1,16 @@
+# Tor settings for onionglass.
+#
+# This Tor is only a client. Its SOCKS port is reachable only from the gateway, because the
+# compose file puts both on a private network.
+
+ClientOnly 1
+
+# Every visitor session presents its own SOCKS credentials, and Tor keeps connections with
+# different credentials on different circuits. ExtendedErrors makes Tor say why an onion site
+# could not be reached, which the gateway turns into a readable message.
+SocksPort 0.0.0.0:9050 IsolateSOCKSAuth IsolateClientAddr ExtendedErrors
+SocksPolicy accept *
+
+DataDirectory /var/lib/tor
+AvoidDiskWrites 1
+Log notice stderr

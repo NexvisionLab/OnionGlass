@@ -111,6 +111,10 @@ class KeyRing:
     def get(self, key_id: str) -> Ed25519PublicKey | None:
         return self._keys.get(key_id)
 
+    def ids(self) -> list[str]:
+        """The key ids the ring holds, in the order they were added."""
+        return list(self._keys)
+
 
 class TicketIssuer:
     """Signs tickets. Used by the built-in sign-in and by tests; integrators may use their own."""

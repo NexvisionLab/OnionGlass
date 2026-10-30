@@ -23,6 +23,7 @@ from onionglass.settings import Profile, Settings
 from onionglass.upstream import TorConfig, TorFetcher
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+TEAM_COMMANDS = frozenset({"serve", "check-config", "keys", "ticket"})
 # Inside a container the gateway must listen on all the container's addresses so the published
 # port reaches it. The container image sets this variable, and the compose file publishes the
 # port on the host's loopback address only.
@@ -174,7 +175,12 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_arguments(argv)
+    arguments = list(argv) if argv is not None else sys.argv[1:]
+    if arguments and arguments[0] in TEAM_COMMANDS:
+        from onionglass.teamcli import run  # noqa: PLC0415 - only team commands need it
+
+        return run(arguments)
+    args = parse_arguments(arguments)
     in_container = os.environ.get(CONTAINER_VARIABLE) == "1"
     if args.host not in LOOPBACK_HOSTS and not (in_container and args.host == "0.0.0.0"):  # noqa: S104
         print(

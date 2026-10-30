@@ -76,7 +76,7 @@ Every request body has `"v": 1`. Fields you do not know must be ignored, so that
 
 ### Using them
 
-There is no command line option for the HTTP hooks yet, since a gateway for other people is set up in code. A team deployment builds the settings like this:
+In a config file, the `[hooks]` section sets the address, the two keys and which of the three hooks to use (see `docs/examples/team.toml`). In code, the same thing looks like this:
 
 ```python
 client = HookClient(

@@ -144,6 +144,31 @@ A file that exists but cannot be read, or that has a line the gateway does not u
 
 Each request is written down before it goes out, and its outcome when it comes back. If the log cannot be written, the request is refused. The log holds the time, what happened, which rule decided it, the profile, group and subject, the site in the form you chose, and the status. It never holds page or form bodies, headers or cookies, and the gateway does not keep visitors' network addresses at all. The file is opened for every line and is private to its owner, so moving it away for rotation works. Keep it on a disk with room, because a full disk stops the gateway.
 
+## Running it for other people
+
+Personal mode, above, is for one person on one machine. To serve other people, run the gateway behind a proxy that ends TLS, give it a domain with a wildcard certificate, and describe it in one TOML file. [docs/examples/team.toml](examples/team.toml) lists every setting with its meaning, and the tests load that file exactly as written, so it stays correct.
+
+```
+onionglass keys generate --id signin-2026-10 --out keys     # a signing key pair for sign-in links
+onionglass check-config --config team.toml                 # read the file and say what it would do
+onionglass serve --config team.toml                        # run it
+onionglass ticket --key-file keys/signin-2026-10.private.pem --key-id signin-2026-10 \
+    --subject alice --group team --profile standard --url https://gateway.example.org
+```
+
+The last command prints a one-time sign-in link, to test a deployment. In real use your own sign-in service makes the tickets, signs them with the private key, and the gateway holds only the public key, so a stolen gateway cannot sign anyone in.
+
+What the loader promises:
+
+- **Typos fail.** A section or setting it does not know is an error.
+- **No secrets in the file.** A key, salt or token is a path to a file. On systems with file modes, one that other users can read is refused.
+- **Paths are relative to the config file**, not to where you start the program.
+- **Problems show at start-up.** A list that cannot be read, a profile with a quota but no meter, a name list without a held list, a file whose folder does not exist, a hook address that is not https: each stops the start with a message that names the place. A setting of zero or an empty string is an error, never a silent default.
+- **It does not listen beyond this machine** unless you say `allow_non_loopback = true`, or it is in the container image. The gateway has no TLS of its own, so the proxy must be the only way in.
+- **`check-config` shows what is on and what is missing**, and warns when there is no audit log, no kill file, no held list or no policy. It never prints a secret.
+
+To rotate the sign-in key, make a new pair, add its public key under `[tickets]`, switch your sign-in service to the new private key, wait for the old links to expire, then remove the old public key. The gateway checks tickets against every key it holds.
+
 ## What the gateway does and does not do for you
 
 - Pages are shown without scripts.

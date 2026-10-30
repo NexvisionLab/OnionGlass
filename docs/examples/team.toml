@@ -1,0 +1,101 @@
+# onionglass: a gateway for other people. Start it with
+#
+#     onionglass serve --config team.toml
+#
+# Paths are relative to this file. Secrets are never written here: a key, a salt or a token is
+# always a path to a file that only its owner can read (chmod 600). A setting the program does
+# not know is an error, so a typo cannot be ignored.
+
+[server]
+domain = "gateway.example.org"   # visitors use this, and one sub-domain per session below it
+scheme = "https"                 # the proxy in front ends TLS; the gateway itself speaks plain http
+listen = "127.0.0.1"             # where the proxy reaches the gateway
+port = 8080
+# public_port = 8443             # only if visitors do not use the usual port for the scheme
+# allow_non_loopback = true      # only if the proxy reaches the gateway over a private network
+
+[tor]
+host = "127.0.0.1"
+ports = [9050, 9052]             # one SOCKS port for each Tor process
+
+[tickets]
+audience = "onionglass"
+# The public keys that may sign visitors in. To rotate: add the new key, switch the signer,
+# then remove the old key. Make a pair with: onionglass keys generate --id signin-2026-10
+keys = [
+  { id = "signin-2026-10", public_key_file = "keys/signin-2026-10.public.pem" },
+]
+
+[limits]
+session_hours = 8
+max_new_sessions_per_minute = 30
+max_concurrent_fetches = 32
+max_fetches_per_session = 6
+max_labels_per_session = 1000
+max_labels_per_page = 100
+max_reports_per_session = 10
+hook_timeout = 2.0               # seconds a policy, audit or quota service has to answer
+
+# The profile for a ticket that names no other, and for every session if you use only one.
+[profile]
+name = "standard"
+allow_images = false
+allow_fonts = true
+allow_post_forms = true
+allow_uploads = false
+allow_password_fields = true
+max_page_bytes = 5000000
+max_asset_bytes = 10000000
+rewrite_timeout = 15
+# max_requests_per_minute = 300
+
+# More profiles. A ticket names the one it wants, and an unknown name is refused.
+[profiles.restricted]
+preset = "restricted"            # text only, no forms or files, 60 requests a minute
+daily_quota = 20                 # per account and day, counted with the two costs below
+open_cost = 1
+page_cost = 0
+
+[profiles.analyst]
+allow_images = true
+max_requests_per_minute = 300
+
+[policy]
+blocklist = "lists/blocked.txt"  # onion addresses that are never opened
+# allowlist = "lists/allowed.txt"  # if set, nothing else may be opened
+rated_list = "lists/rated.txt"   # every other site is shown as text only
+
+[kill]
+file = "state/kill"              # put "all" in it to stop everything; delete it to resume
+
+[audit]
+file = "state/audit.log"
+address_form = "origin"          # full, origin, hash or none
+salt_file = "secrets/audit.salt" # only used for "hash"
+
+[held]
+file = "state/held.txt"          # sites waiting for review; delete a line to release one
+
+[names]
+file = "lists/names.txt"         # phrases that hold a site when they appear in a title or heading
+
+[reports]
+file = "state/reports.log"
+hold_after = 3                   # hold a site once this many different visitors report it
+
+[metrics]
+token_file = "secrets/metrics.token"
+
+[quota]
+file = "state/quota.log"         # keeps daily counts across restarts
+
+# Or serve the policy, the audit log and the quotas from another program. Then leave out the
+# [policy], [audit] and [quota] sections above for whatever the other program takes over.
+#
+# [hooks]
+# url = "https://hooks.internal.example/onionglass"
+# key_id = "gateway-2026-10"
+# signing_key_file = "secrets/gateway.private.pem"
+# response_keys = [{ id = "service-2026-10", public_key_file = "keys/service-2026-10.public.pem" }]
+# use = ["policy", "audit", "quota"]
+# cache_seconds = 5

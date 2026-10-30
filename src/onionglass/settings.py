@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from onionglass.audit import AuditSink
@@ -28,6 +29,28 @@ class Profile:
     max_page_bytes: int = 5_000_000
     max_asset_bytes: int = 10_000_000
     rewrite_timeout: float = 15.0
+    max_requests_per_minute: int | None = None  # per session, every request counts; None: no limit
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("a profile needs a name")
+        if self.max_requests_per_minute is not None and self.max_requests_per_minute < 1:
+            raise ValueError("the request limit must be at least 1")
+
+    @classmethod
+    def restricted(cls) -> Profile:
+        """Text only, no forms, no logins, no files, no images or fonts, and a request limit."""
+        return cls(
+            name="restricted",
+            allow_images=False,
+            allow_fonts=False,
+            allow_post_forms=False,
+            allow_uploads=False,
+            allow_password_fields=False,
+            max_page_bytes=2_000_000,
+            max_asset_bytes=2_000_000,
+            max_requests_per_minute=60,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +62,7 @@ class Settings:
     session_ttl: float = 8 * 3600
     cookie_name: str = "og_session"
     profile: Profile = field(default_factory=Profile)
+    profiles: Mapping[str, Profile] = field(default_factory=dict)
     max_request_body: int = 1_000_000
     max_labels_per_session: int = 1000
     max_labels_per_page: int = 100
@@ -52,7 +76,16 @@ class Settings:
     audit: AuditSink | None = None
     hook_timeout: float = 2.0
 
+    def profile_named(self, name: str) -> Profile | None:
+        """The profile a session was given, or None if this gateway does not have it."""
+        if name == self.profile.name:
+            return self.profile
+        return self.profiles.get(name)
+
     def __post_init__(self) -> None:
+        for key, value in self.profiles.items():
+            if key != value.name or key == self.profile.name:
+                raise ValueError("profiles must be named by their own name, and names are unique")
         if self.scheme not in ("http", "https"):
             raise ValueError("scheme must be http or https")
         if self.port is not None and not 1 <= self.port <= 65535:

@@ -67,6 +67,12 @@ These options work in personal mode and are the same ones a team deployment uses
 
 A list that cannot be read, or that has a line that is not an onion address, stops the program from starting. A typo never means "no list".
 
+### Profiles
+
+A profile says what a visitor may do: images, fonts, forms and logins, file uploads, page and file size limits, and a limit on requests per minute. A signed-in visitor's ticket names a profile, and the gateway gives that session exactly that profile. A ticket that names a profile this gateway does not have is refused, and so is a session whose profile has since been removed. Nobody is ever given the default profile by mistake.
+
+The profile is enforced on the request as well as on the page that comes back. A profile without forms refuses a post even if the visitor sends one by hand, and a profile without uploads refuses a body that carries a file. Profiles are set in the gateway's settings (`Settings.profiles`). `Profile.restricted()` is a ready-made text-only profile: no images, fonts, forms, logins or uploads, and 60 requests a minute. Personal mode has one profile and the command line does not change it.
+
 ### The kill file
 
 Create the file to stop serving, delete it or empty it to start again. The gateway looks at it about once a second and does not need a restart. One scope per line:

@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import secrets
 import time
 from collections import deque
@@ -54,7 +55,7 @@ from onionglass.policy import Decision, PolicyRequest
 from onionglass.rewrite.css import CssError, CssOptions, sanitize_stylesheet, verify_stylesheet
 from onionglass.rewrite.html import HtmlOptions, RewriteError, decode_document, rewrite_html
 from onionglass.rewrite.urls import resolve_reference
-from onionglass.settings import Settings
+from onionglass.settings import Profile, Settings
 from onionglass.store import InMemoryStore, SessionStore, StoreFullError
 from onionglass.tickets import TicketError, TicketVerifier
 from onionglass.upstream import Fetcher, UpstreamError, UpstreamRequest, UpstreamResponse
@@ -73,6 +74,16 @@ class _Who:
     subject: str
     group: str
     profile: str
+
+
+_FILE_PART = re.compile(rb"content-disposition:[^\r\n]*;\s*filename\*?\s*=", re.IGNORECASE)
+
+
+def _has_file_part(body: bytes, content_type: str | None) -> bool:
+    """True if a multipart body carries a file, whatever else it holds."""
+    if content_type is None or parse_content_type(content_type)[0] != "multipart/form-data":
+        return False
+    return _FILE_PART.search(body) is not None
 
 
 _HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
@@ -139,6 +150,7 @@ class Gateway:
         self._active_fetches = 0
         self._active_by_session: dict[str, int] = {}
         self._new_sessions: deque[float] = deque()
+        self._requests: dict[str, deque[float]] = {}
         self.app = Starlette(
             routes=[Route("/{path:path}", self._handle, methods=["GET", "HEAD", "POST"])]
         )
@@ -282,6 +294,23 @@ class Gateway:
         """None means go ahead. Anything else is the refusal to send."""
         kind = await self._refusal(who, origin, action, path)
         return None if kind is None else self._error(kind, apex=apex)
+
+    def _take_rate_slot(self, session_id: str, profile: Profile) -> bool:
+        """Count a request against the profile's per-minute limit. False means slow down."""
+        limit = profile.max_requests_per_minute
+        if limit is None:
+            return True
+        now = self._clock()
+        window = self._requests.setdefault(session_id, deque())
+        while window and now - window[0] > 60:
+            window.popleft()
+        if len(window) >= limit:
+            return False
+        window.append(now)
+        if len(self._requests) > 10_000:
+            for key in [k for k, v in self._requests.items() if not v or now - v[-1] > 60]:
+                del self._requests[key]
+        return True
 
     async def _current_session(self, request: Request) -> str | None:
         value = request.cookies.get(self.settings.cookie_name)
@@ -489,6 +518,9 @@ class Gateway:
         except TicketError as exc:
             _log.info("ticket refused: %s", exc.reason)
             return self._error("forbidden", apex=True)
+        if self.settings.profile_named(claims.profile) is None:
+            _log.info("ticket names a profile this gateway does not have")
+            return self._error("unknown_profile", apex=True)
         ticket_origin = (
             OnionOrigin("http", OnionHost(claims.onion), 80) if claims.onion is not None else None
         )
@@ -564,20 +596,62 @@ class Gateway:
         record = await self.store.get(f"cur:{session_id}")
         return Response((record or "{}").encode("utf-8"), 200, headers)
 
+    async def _gate(
+        self,
+        session_id: str,
+        who: _Who,
+        profile: Profile,
+        origin: OnionOrigin,
+        method: str,
+        target: str,
+    ) -> Response | None:
+        """What the profile, the rate limit, the kill switch, the policy and the audit log say."""
+        if method == "POST" and not profile.allow_post_forms:
+            await self._record("refused", who, origin, "fetch", rule="profile:post", path=target)
+            return self._error("not_permitted")
+        if not self._take_rate_slot(session_id, profile):
+            return self._error("slow_down")
+        return await self._admit(who, origin, "fetch", path=target)
+
+    async def _post_body(
+        self, request: Request, who: _Who, profile: Profile, origin: OnionOrigin, target: str
+    ) -> bytes | Response:
+        """The body of a post, or the refusal to send if it is too big or carries a file."""
+        body = await self._read_body(request, self.settings.max_request_body)
+        if body is None:
+            return self._error("payload_too_large")
+        if not profile.allow_uploads and _has_file_part(body, request.headers.get("content-type")):
+            await self._record("refused", who, origin, "fetch", rule="profile:upload", path=target)
+            return self._error("not_permitted")
+        return body
+
     # --- onion content ---------------------------------------------------------------------
 
-    async def _handle_label(self, request: Request, label: str) -> Response:
+    async def _label_session(
+        self, request: Request, label: str
+    ) -> tuple[str, OnionOrigin, _Who, Profile] | Response:
+        """Who a label host belongs to, or the refusal to send if it belongs to nobody usable."""
         settings = self.settings
         target = await self.labels.resolve(label)
         if target is None:
             return self._error("not_found")
-        session_id, origin = target.session_id, target.origin
+        session_id = target.session_id
         session_record = await self.store.get(f"sess:{session_id}")
         if not session_record:
             return self._error("expired_session")
         who = self._who(session_record)
+        profile = settings.profile_named(who.profile)
+        if profile is None:
+            return self._error("unknown_profile")
         if settings.require_cookie and request.cookies.get(settings.cookie_name) != session_id:
             return self._error("forbidden")
+        return session_id, target.origin, who, profile
+
+    async def _handle_label(self, request: Request, label: str) -> Response:
+        found = await self._label_session(request, label)
+        if isinstance(found, Response):
+            return found
+        session_id, origin, who, profile = found
         method = request.method
         raw_path = request.scope.get("raw_path") or request.url.path.encode("ascii", "ignore")
         query = request.scope.get("query_string", b"")
@@ -590,15 +664,15 @@ class Gateway:
             )
         except (UnicodeDecodeError, InvalidOnionError):
             return self._error("bad_request")
-        refusal = await self._admit(who, origin, "fetch", path=request_target)
+        refusal = await self._gate(session_id, who, profile, origin, method, request_target)
         if refusal is not None:
             return refusal
         body = b""
         if method == "POST":
-            read = await self._read_body(request, settings.max_request_body)
-            if read is None:
-                return self._error("payload_too_large")
-            body = read
+            posted = await self._post_body(request, who, profile, origin, request_target)
+            if isinstance(posted, Response):
+                return posted
+            body = posted
         context = self._request_context(request)
         cookie = await self.jar.header_for(session_id, origin, request_target, context)
         destination = request.headers.get("sec-fetch-dest", "")
@@ -627,9 +701,7 @@ class Gateway:
         if not self._take_fetch_slot(session_id):
             return self._error("busy")
         try:
-            response = await self.fetcher.fetch(
-                upstream, max_body_bytes=settings.profile.max_asset_bytes
-            )
+            response = await self.fetcher.fetch(upstream, max_body_bytes=profile.max_asset_bytes)
         except UpstreamError as exc:
             _log.info("fetch failed: %s", exc.kind)
             await self._record("failed", who, origin, "fetch", rule=exc.kind, path=request_target)
@@ -651,7 +723,7 @@ class Gateway:
             if destination in _NAVIGATION_DESTINATIONS
             else None
         )
-        return await self._deliver(session_id, page_url, method, response, frame_url)
+        return await self._deliver(session_id, page_url, method, response, profile, frame_url)
 
     async def _deliver(
         self,
@@ -659,10 +731,10 @@ class Gateway:
         page_url: OnionUrl,
         method: str,
         response: UpstreamResponse,
+        profile: Profile,
         frame_url: str | None = None,
     ) -> Response:
         settings = self.settings
-        profile = settings.profile
         status = response.status if 200 <= response.status < 600 else 502
         if status in (204, 205, 304):
             # These replies have no body, and a body would break the connection.
@@ -680,9 +752,11 @@ class Gateway:
         if media in _HTML_TYPES:
             if method == "HEAD":
                 return Response(b"", status, document_headers(policy))
-            return await self._deliver_html(session_id, page_url, body, charset, status, frame_url)
+            return await self._deliver_html(
+                session_id, page_url, body, charset, status, profile, frame_url
+            )
         if media == "text/css":
-            return await self._deliver_css(session_id, page_url, body, charset, status)
+            return await self._deliver_css(session_id, page_url, body, charset, status, profile)
         if media in _FONT_TYPES and profile.allow_fonts:
             return Response(body, status, resource_headers(policy, media))
         if media in _IMAGE_TYPES:
@@ -712,10 +786,9 @@ class Gateway:
                 continue
         return labels
 
-    async def _in_thread(self, function: Callable[[], Any]) -> Any:
-        return await asyncio.wait_for(
-            asyncio.to_thread(function), timeout=self.settings.profile.rewrite_timeout
-        )
+    @staticmethod
+    async def _in_thread(function: Callable[[], Any], profile: Profile) -> Any:
+        return await asyncio.wait_for(asyncio.to_thread(function), timeout=profile.rewrite_timeout)
 
     async def _deliver_html(
         self,
@@ -724,9 +797,9 @@ class Gateway:
         body: bytes,
         charset: str | None,
         status: int,
+        profile: Profile,
         frame_url: str | None = None,
     ) -> Response:
-        profile = self.settings.profile
         mapper = PlaceholderMapper(self.settings)
         options = HtmlOptions(
             allow_images=profile.allow_images,
@@ -737,7 +810,8 @@ class Gateway:
         )
         try:
             result = await self._in_thread(
-                lambda: rewrite_html(body, page_url, mapper, options=options, charset=charset)
+                lambda: rewrite_html(body, page_url, mapper, options=options, charset=charset),
+                profile,
             )
         except (RewriteError, TimeoutError):
             return self._error("rewrite_failed")
@@ -748,14 +822,20 @@ class Gateway:
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
 
     async def _deliver_css(
-        self, session_id: str, page_url: OnionUrl, body: bytes, charset: str | None, status: int
+        self,
+        session_id: str,
+        page_url: OnionUrl,
+        body: bytes,
+        charset: str | None,
+        status: int,
+        profile: Profile,
     ) -> Response:
         mapper = PlaceholderMapper(self.settings)
-        options = CssOptions(allow_images=self.settings.profile.allow_images)
+        options = CssOptions(allow_images=profile.allow_images)
         source = decode_document(body, charset)
         try:
             css = await self._in_thread(
-                lambda: sanitize_stylesheet(source, page_url, mapper, options)
+                lambda: sanitize_stylesheet(source, page_url, mapper, options), profile
             )
         except (CssError, TimeoutError):
             return self._error("rewrite_failed")

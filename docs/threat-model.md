@@ -73,6 +73,8 @@ These are the properties tests must prove.
 | Logs reveal what visitors opened | No bodies, optional address truncation or salted hashing, retention limits | P8, P10 |
 | Credentials typed into an onion login form leak | Never logged, masked in captures, warning shown on password fields, blocked in restricted profiles | P8 |
 | Policy outage turns the gateway into an open proxy | Fail closed on every dependency | P7 |
+| A visitor sends a request no page of ours would have produced, such as a post or a file, under a profile that forbids it | The profile is enforced on the request as well as on the page. Unknown profiles are refused, never replaced by the default | P7 |
+| One signed-in account floods the gateway | Per-profile request limit for each session, on top of the global limits | P7 |
 | Abuse to reach illegal material | Blocklists, name checks on address and page title, text-only for unrated sites, abuse procedure, images never fetched by default | P6 |
 | Tampered evidence | WARC capture, hashes, signed manifest, optional trusted timestamp, encryption at rest | none yet |
 | Malicious dependency or contributor | Pinned and hashed dependencies, dependency review, signed releases, code ownership on sensitive modules, CodeQL and fuzzing | none yet |
@@ -106,7 +108,7 @@ Anonymity of the visitor against the operator, circumventing law enforcement or 
 | P4 nothing identifying reaches the onion site | Covered for requests, for cookies kept on the server, for the multipart boundary and for the session identifier never reaching Tor, and under generated requests | `tests/test_request_fuzz.py`, `tests/test_review_fixes.py`, `tests/test_headers.py`, `tests/test_upstream.py`, `tests/test_cookies.py`, `tests/test_gateway.py` |
 | P5 only valid v3 onion destinations | Covered for parsing, requests and the Tor fetcher | `tests/test_onion.py`, `tests/test_upstream.py`, `tests/test_gateway.py` |
 | P6 withheld images never requested | Covered end to end, and checked by hand in a real browser | `tests/test_rewrite_html.py`, `tests/test_rewrite_css.py`, `tests/test_gateway.py` |
-| P7 fail closed | Covered for rewrite and decode failures, and for the policy, the audit log and the kill file: each is failed, hung and given nonsense in turn and the gateway refuses. Evidence capture does not exist yet | `tests/test_policy_ops.py`, `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
+| P7 fail closed | Covered for rewrite and decode failures, for the policy, the audit log and the kill file (each is failed, hung and given nonsense in turn and the gateway refuses), and for profiles: unknown profiles, forms, uploads and request limits are enforced per session. Evidence capture does not exist yet | `tests/test_profiles.py`, `tests/test_policy_ops.py`, `tests/test_rewrite_review.py`, `tests/test_gateway.py` |
 | P8 no bodies or passwords in logs | Covered for the audit log, which holds no bodies, headers or cookies and keeps a hostile subject on one line | `tests/test_policy_ops.py`, `tests/test_gateway.py` |
 | P9 tickets cannot be forged or replayed | Covered | `tests/test_tickets.py` |
 | P10 visitor addresses not logged | Covered: the gateway keeps no visitor addresses, and the audit log names the onion site only in the form the operator chose (`origin`, `full`, `hash` or `none`) | `tests/test_policy_ops.py`, `tests/test_gateway.py` |

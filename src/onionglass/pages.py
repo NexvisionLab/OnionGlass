@@ -152,6 +152,21 @@ ERRORS: dict[str, tuple[int, str, str]] = {
         "Too many sites",
         "This session has opened as many different onion sites as it is allowed. Start again.",
     ),
+    "unknown_profile": (
+        403,
+        "Account not set up",
+        "Your account's profile is not available on this service.",
+    ),
+    "not_permitted": (
+        403,
+        "Not allowed for your account",
+        "Your profile does not allow that.",
+    ),
+    "slow_down": (
+        429,
+        "Slow down",
+        "Your account is making requests too quickly. Wait a moment and try again.",
+    ),
     "denied": (
         403,
         "Not available here",

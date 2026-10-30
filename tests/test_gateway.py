@@ -676,7 +676,8 @@ def test_the_warning_page_shows_where_the_link_goes() -> None:
     assert "example.org" in response.text and "leaves Tor" in response.text
     assert "<script>alert(1)" not in response.text
     assert 'target="_blank"' in response.text and "noopener" in response.text
-    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    # Only the viewer's own frame may show the warning page, and only from its own origin.
+    assert "frame-ancestors 'self'" in response.headers["content-security-policy"]
 
 
 @pytest.mark.parametrize(

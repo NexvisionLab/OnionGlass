@@ -114,8 +114,11 @@ class Gateway:
 
     # --- helpers ---------------------------------------------------------------------------
 
-    def _apex(self, body: bytes, status: int = 200, *, form: bool = False) -> Response:
-        return Response(body, status, apex_headers(self.settings.header_policy, form=form))
+    def _apex(
+        self, body: bytes, status: int = 200, *, form: bool = False, framed: bool = False
+    ) -> Response:
+        headers = apex_headers(self.settings.header_policy, form=form, framed=framed)
+        return Response(body, status, headers)
 
     def _error(self, kind: str, *, apex: bool = False) -> Response:
         status, body = pages.error_page(kind)
@@ -240,7 +243,7 @@ class Gateway:
         )
         if not usable:
             return self._error("bad_request", apex=True)
-        return self._apex(pages.external_page(target))
+        return self._apex(pages.external_page(target), framed=True)
 
     async def _open(self, request: Request) -> Response:
         if not self._same_origin(request):

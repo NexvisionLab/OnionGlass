@@ -253,7 +253,8 @@ def viewer_page(frame_src: str) -> bytes:
         '<button id="reload" type="button">Reload</button>'
         '<a href="/">Open another address</a></div>'
         f'<iframe id="frame" title="Page from the onion site" src="{html.escape(frame_src)}" '
-        'sandbox="allow-forms allow-same-origin" referrerpolicy="no-referrer"></iframe>'
+        'sandbox="allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox" '
+        'referrerpolicy="no-referrer"></iframe>'
         '<script src="/_og/viewer.js"></script></body></html>'
     )
     return document.encode("utf-8")

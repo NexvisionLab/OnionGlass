@@ -114,11 +114,14 @@ def document_headers(policy: HeaderPolicy) -> dict[str, str]:
     }
 
 
-def apex_headers(policy: HeaderPolicy, *, form: bool = False) -> dict[str, str]:
+def apex_headers(
+    policy: HeaderPolicy, *, form: bool = False, framed: bool = False
+) -> dict[str, str]:
     """Headers for the gateway's own pages on its main domain: entry form, warnings, errors.
 
     These pages have a few lines of inline style and, for the entry form, a form that posts back
-    to the gateway. Nothing else is allowed, and no other site may frame them.
+    to the gateway. Nothing else is allowed. No other site may frame them. The warning page for
+    links that leave Tor is the one page the viewer's own frame may show (``framed``).
     """
     csp = "; ".join(
         (
@@ -129,7 +132,7 @@ def apex_headers(policy: HeaderPolicy, *, form: bool = False) -> dict[str, str]:
             "base-uri 'none'",
             "connect-src 'none'",
             "form-action 'self'" if form else "form-action 'none'",
-            "frame-ancestors 'none'",
+            "frame-ancestors 'self'" if framed else "frame-ancestors 'none'",
         )
     )
     return {
@@ -151,7 +154,7 @@ def viewer_headers(policy: HeaderPolicy) -> dict[str, str]:
             "script-src 'self'",
             "connect-src 'self'",
             "style-src 'unsafe-inline'",
-            f"frame-src {policy.source}",
+            f"frame-src {policy.source} 'self'",
             "object-src 'none'",
             "base-uri 'none'",
             "form-action 'none'",

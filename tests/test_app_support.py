@@ -154,6 +154,12 @@ def test_apex_headers_only_allow_a_form_when_asked() -> None:
     )
 
 
+def test_only_the_warning_page_may_be_framed_and_only_by_the_gateway_itself() -> None:
+    policy = HeaderPolicy("https", "gw.example")
+    assert "frame-ancestors 'self'" in apex_headers(policy, framed=True)["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in apex_headers(policy)["Content-Security-Policy"]
+
+
 def test_every_error_kind_has_a_page_and_unknown_kinds_fall_back() -> None:
     for kind, (status, title, message) in pages.ERRORS.items():
         got_status, body = pages.error_page(kind)

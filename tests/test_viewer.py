@@ -33,7 +33,10 @@ def test_the_viewer_frames_the_site_on_a_label_host_with_a_sandbox() -> None:
     assert response.status_code == 200
     label = label_of(path)
     assert f'src="http://{label}.localhost:{PORT}/some/page?x=1"' in response.text
-    assert 'sandbox="allow-forms allow-same-origin"' in response.text
+    sandbox = "allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+    assert f'sandbox="{sandbox}"' in response.text
+    assert "allow-scripts" not in response.text
+    assert "allow-top-navigation" not in response.text
     assert 'referrerpolicy="no-referrer"' in response.text
     assert '<script src="/_og/viewer.js"></script>' in response.text
     assert "can see every address you open" in response.text
@@ -49,7 +52,8 @@ def test_the_viewer_policy_allows_only_its_own_script_and_the_gateways_frames() 
     }
     assert rules["script-src"] == "'self'"
     assert rules["connect-src"] == "'self'"
-    assert rules["frame-src"] == f"http://*.localhost:{PORT}"
+    # The gateway's label hosts, and its own origin so the warning page can show in the frame.
+    assert rules["frame-src"] == f"http://*.localhost:{PORT} 'self'"
     assert rules["frame-ancestors"] == "'none'"
     assert rules["default-src"] == "'none'"
     assert rules["form-action"] == "'none'"

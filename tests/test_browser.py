@@ -8,6 +8,7 @@ are skipped when no browser can be started.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import socket
 import threading
@@ -352,5 +353,58 @@ def test_the_report_button_works_under_the_viewers_policy(browser: Browser, tmp_
         expect(page.locator("#report-status")).to_have_text(re.compile("already reported"))
         lines = (tmp_path / "reports.log").read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1 and TOR_PROJECT in lines[0] and "harmful" in lines[0]
+        assert running.detector.hits == []
+        context.close()
+
+
+class HidingOnion:
+    """A page built the way some real sites are: it hides itself and, for a browser without
+    scripts, asks to be sent to a lighter page."""
+
+    PAGE = (
+        '<!doctype html><title>App</title><noscript><meta http-equiv="refresh" content="0; url=/lite">'
+        "<style>body{display:none}</style></noscript><h1>Hidden app</h1>"
+    )
+
+    async def fetch(
+        self, request: UpstreamRequest, *, max_body_bytes: int | None = None
+    ) -> UpstreamResponse:
+        if request.target == "/lite":
+            await asyncio.sleep(3)  # slow enough for the viewer to ask again before it arrives
+            body = b"<title>Lite</title><h1>Lite page</h1>"
+        else:
+            body = self.PAGE.encode()
+        return UpstreamResponse(
+            status=200,
+            reason="OK",
+            headers=(("content-type", "text/html; charset=utf-8"),),
+            body=body,
+            elapsed=0.0,
+        )
+
+
+def test_a_page_that_hides_itself_still_shows_the_visitor_where_it_wanted_to_go(
+    browser: Browser,
+) -> None:
+    with running_gateway(allow_images=False, site=lambda _leak: HidingOnion()) as running:
+        context = browser.new_context()
+        page = context.new_page()
+        page.set_default_timeout(15_000)
+        open_in_viewer(page, running, f"{TOR_PROJECT}.onion")
+        # The page has hidden its own body, so nothing inside the frame can be seen.
+        expect(page.locator("#address")).to_have_text(f"http://{TOR_PROJECT}.onion/")
+        assert frame_of(page).evaluate("getComputedStyle(document.body).display") == "none"
+        # The toolbar belongs to the gateway, and it says what the page asked for.
+        notice = page.locator("#redirect")
+        expect(notice).to_be_visible()
+        expect(notice).to_contain_text("Automatic redirects are off")
+        page.get_by_role("button", name="Follow it").click()
+        # The viewer asks again while the lighter page is still on its way, and is told the old
+        # page's request once more. The notice must not come back.
+        page.wait_for_timeout(2600)
+        assert not notice.is_visible()  # an immediate check: expect() would wait for it to go
+        page.frame_locator("#frame").get_by_role("heading", name="Lite page").wait_for()
+        expect(notice).to_be_hidden()
+        expect(page.locator("#address")).to_have_text(f"http://{TOR_PROJECT}.onion/lite")
         assert running.detector.hits == []
         context.close()

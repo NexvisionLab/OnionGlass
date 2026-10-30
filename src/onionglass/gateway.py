@@ -679,9 +679,19 @@ class Gateway:
         return Response(pages.VIEWER_SCRIPT.encode("ascii"), 200, headers)
 
     async def _remember_page(
-        self, session_id: str, page_url: OnionUrl, frame_url: str, title: str
+        self,
+        session_id: str,
+        page_url: OnionUrl,
+        frame_url: str,
+        title: str,
+        refresh: str = "",
     ) -> None:
-        record = json.dumps({"url": page_url.url, "frame": frame_url, "title": title})
+        """What the viewer shows about the page: its address, the frame to reload, its title, and
+        where the page asked to be sent. The last is shown in the toolbar, because a page can hide
+        everything inside its own frame."""
+        record = json.dumps(
+            {"url": page_url.url, "frame": frame_url, "title": title, "refresh": refresh}
+        )
         await self.store.put(f"cur:{session_id}", record, self.settings.session_ttl)
 
     def _metrics(self, request: Request) -> Response:
@@ -1005,7 +1015,8 @@ class Gateway:
         labels = await self._label_map(session_id, mapper)
         text = mapper.substitute(result.body.decode("utf-8"), labels)
         if frame_url is not None and status < 400:
-            await self._remember_page(session_id, page_url, frame_url, result.title)
+            refresh = mapper.substitute(result.refresh_url, labels) if result.refresh_url else ""
+            await self._remember_page(session_id, page_url, frame_url, result.title, refresh)
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
 
     async def _name_gate_hit(

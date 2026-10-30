@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -110,6 +111,57 @@ def test_the_current_address_follows_page_loads_in_the_frame() -> None:
     assert record["url"] == f"http://{TOR_PROJECT}.onion/dir/page?x=1"
     assert record["frame"] == f"http://{label}.localhost:{PORT}/dir/page?x=1"
     assert record["title"] == "My site"
+
+
+def test_a_page_that_asks_to_be_redirected_has_its_request_shown_in_the_toolbar_record() -> None:
+    page = '<noscript><meta http-equiv="refresh" content="0; url=/lite"></noscript><p>x</p>'
+    env = Env(lambda _r: reply(page))
+    label = label_of(viewer_path(env))
+    env.get(label, "/", headers={"sec-fetch-dest": "iframe"})
+    record = env.client.get("/_og/current").json()
+    assert record["refresh"] == f"http://{label}.localhost:{PORT}/lite"
+
+
+def test_a_redirect_to_another_site_goes_through_the_warning_page() -> None:
+    page = '<meta http-equiv="refresh" content="0; url=http://evil.example/x"><p>x</p>'
+    env = Env(lambda _r: reply(page))
+    label = label_of(viewer_path(env))
+    env.get(label, "/", headers={"sec-fetch-dest": "iframe"})
+    refresh = env.client.get("/_og/current").json()["refresh"]
+    assert refresh.startswith(f"http://localhost:{PORT}/_og/external?u=")
+    assert "evil.example" in refresh and not refresh.startswith("http://evil.example")
+
+
+def test_a_redirect_to_another_onion_uses_that_sites_own_label() -> None:
+    other = "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad"
+    page = f'<meta http-equiv="refresh" content="0; url=http://{other}.onion/"><p>x</p>'
+    env = Env(lambda _r: reply(page))
+    label = label_of(viewer_path(env))
+    env.get(label, "/", headers={"sec-fetch-dest": "iframe"})
+    refresh = env.client.get("/_og/current").json()["refresh"]
+    assert re.fullmatch(rf"http://[a-z2-7]{{26}}\.localhost:{PORT}/", refresh)
+    assert other not in refresh and label not in refresh
+
+
+def test_pages_without_a_redirect_record_none() -> None:
+    env = Env(lambda _r: reply("<title>Plain</title><p>x</p>"))
+    label = label_of(viewer_path(env))
+    env.get(label, "/", headers={"sec-fetch-dest": "iframe"})
+    assert env.client.get("/_og/current").json()["refresh"] == ""
+
+
+def test_the_toolbar_has_a_hidden_redirect_notice_a_page_cannot_style() -> None:
+    env = Env()
+    response = env.client.get(viewer_path(env))
+    assert 'id="redirect" hidden' in response.text and 'id="redirect-go"' in response.text
+    assert "[hidden]{display:none!important}" in response.text  # the hidden attribute really hides
+    assert "Automatic redirects are off" in response.text
+
+
+def test_the_script_only_follows_addresses_on_this_gateway() -> None:
+    assert "onThisGateway(asked)" in VIEWER_SCRIPT
+    assert 'url.host.endsWith("." + window.location.host)' in VIEWER_SCRIPT
+    assert 'url.protocol === "http:"' in VIEWER_SCRIPT and "javascript" not in VIEWER_SCRIPT
 
 
 def test_only_page_navigations_update_the_current_address() -> None:

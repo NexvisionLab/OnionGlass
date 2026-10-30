@@ -136,7 +136,25 @@ On 2026-10-30 the gateway was run in personal mode against a fake onion site ser
 
 This found one real bug that the automated tests had missed: with a `no-referrer` policy Chrome sends `Origin: null` on a same-origin form post, and the gateway wrongly refused it. It is fixed and has a regression test.
 
-Not covered by this check: the entry form's redirect to a label host could not be completed in the test browser, which aborted the redirect to a different host name (the gateway's reply was confirmed correct with curl, and opening the label address directly worked); the browser's behaviour with the viewer page and a sandboxed frame, which does not exist yet; and anything involving a real Tor connection. An automated browser test for the properties above is planned.
+Not covered by this check: the entry form's redirect to a label host could not be completed in the test browser, which aborted the redirect to a different host name (the gateway's reply was confirmed correct with curl, and opening the label address directly worked); the browser's behaviour with the viewer page and a sandboxed frame, which does not exist yet; and anything involving a real Tor connection, which is covered below. An automated browser test for the properties above is planned.
+
+### Real Tor, real sites
+
+On 2026-10-30 the gateway was run against the real Tor network, with Chrome, on the Tor Project's and DuckDuckGo's public onion sites, with the leak detector watching.
+
+| Result | Tor Project, images off | Tor Project, images on | DuckDuckGo |
+|---|---|---|---|
+| Script elements in the page | 0 | 0 | 0 |
+| Requests to anything but the gateway | 0 | 0 | 0 |
+| Requests that reached the leak detector | 0 | 0 | 0 |
+| Images shown | 0 of 10 withheld | 10 of 10 | none on the page |
+| Looks right to a visitor | yes | yes, fully styled | blank at first, see below |
+
+It also showed that an address with a valid key and no site behind it gives "site not found", that the redirect from DuckDuckGo's http onion to its https onion is followed through the gateway, and that the Tor Project's page arrives complete with its fonts and styles.
+
+One real problem came out of it. DuckDuckGo's page tells a browser without scripts to go to a lighter page, and hides its own body in the same place. The gateway turned the redirect into a notice with a link, which is the intended behaviour, but the notice was inside the page that hides itself, so a visitor saw nothing. The request is now shown in the viewer's toolbar, which no page can style, with a "Follow it" button that only accepts an address on the gateway. A test builds a page that hides itself and checks it in Chrome. The opt-in tests in `tests/test_live_tor.py` repeat the real-Tor checks for anyone who has a Tor.
+
+Sites that need scripts to show anything at all will show little or nothing, as they would in any browser with scripts off. That is the cost of never running a site's code, and the full remote session planned for milestone 5 is the answer for those.
 
 ## 10. Independent reviews
 
@@ -164,7 +182,7 @@ This found one real flaw. A stylesheet with an unterminated string or address wa
 
 The request side was then fuzzed the same way, in `tests/test_request_fuzz.py`, through the whole gateway with a fake onion site. Generated visitor requests (odd methods, paths, queries, forwarding and identity headers, every browser fetch-metadata combination, multipart bodies with many boundary styles) must never put a visitor header, the session identifier, the label or the gateway's own address in front of the onion site, and every header name the site receives must be on a short list. Generated onion replies (any status, content type, encoding, redirect target and a long list of response headers) must reach the visitor only through the gateway's own headers, with the policy always present, an allowed content type, and a redirect that points only at the gateway. Generated `Set-Cookie` lines must come back as a well-formed cookie header or not at all and never reach the visitor. This found one small flaw: the multipart boundary swap replaced every occurrence of the boundary text, which would damage a body for a very short boundary. Only the delimiter lines are swapped now.
 
-The default run uses a few hundred generated pages. Set `ONIONGLASS_FUZZ_SCALE=10` for a long hunt. One run at eight times the default found nothing more. Still not covered: the entry form and ticket paths under generated input, and any real Tor connection.
+The default run uses a few hundred generated pages. Set `ONIONGLASS_FUZZ_SCALE=10` for a long hunt. One run at eight times the default found nothing more. Still not covered: the entry form and ticket paths under generated input.
 
 ## 11. How this is kept honest
 

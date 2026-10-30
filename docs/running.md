@@ -39,6 +39,16 @@ If Tor Browser is running, its Tor listens on port 9150. `onionglass --tor-port 
 
 Each site you open is shown from its own host name under `localhost`, such as `abcd...wxyz.localhost`. Current Chrome, Edge and Firefox send those names to your own machine without any setup. If your browser does not, use a browser that does.
 
+## Testing against a real Tor
+
+The ordinary tests use a pretend Tor. A second set talks to the real Tor network, using only the Tor Project's and DuckDuckGo's public onion sites. They are skipped unless you name a Tor you have started:
+
+```
+ONIONGLASS_TEST_TOR=127.0.0.1:9050 pytest tests/test_live_tor.py
+```
+
+They check that a real page comes through safely, that an address with nothing behind it gives "site not found", and that a redirect between https onions is followed. They need the internet and take a few minutes.
+
 ## Containers
 
 ```bash

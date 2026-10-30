@@ -251,6 +251,21 @@ VIEWER_SCRIPT = """(function () {
   var address = document.getElementById("address");
   var current = "";
   var frameUrl = frame.getAttribute("src");
+  var redirectBox = document.getElementById("redirect");
+  var redirectGo = document.getElementById("redirect-go");
+  var redirectTarget = "";
+  var redirectDone = "";
+
+  // Only an address on this gateway may be followed from the toolbar.
+  function onThisGateway(value) {
+    try {
+      var url = new URL(value, window.location.href);
+      return (url.protocol === "http:" || url.protocol === "https:") &&
+        (url.host === window.location.host || url.host.endsWith("." + window.location.host));
+    } catch (error) {
+      return false;
+    }
+  }
 
   function update() {
     fetch("/_og/current", { credentials: "same-origin", cache: "no-store" })
@@ -263,6 +278,14 @@ VIEWER_SCRIPT = """(function () {
           if (typeof data.title === "string" && data.title) {
             document.title = data.title + " - onionglass";
           }
+          var asked = typeof data.refresh === "string" ? data.refresh : "";
+          if (asked && asked !== redirectDone && onThisGateway(asked)) {
+            redirectTarget = asked;
+            redirectBox.hidden = false;
+          } else {
+            redirectTarget = "";
+            redirectBox.hidden = true;
+          }
         }
       })
       .catch(function () {});
@@ -271,6 +294,13 @@ VIEWER_SCRIPT = """(function () {
   document.getElementById("copy").addEventListener("click", function () {
     if (current && navigator.clipboard) {
       navigator.clipboard.writeText(current).catch(function () {});
+    }
+  });
+  redirectGo.addEventListener("click", function () {
+    if (redirectTarget) {
+      redirectDone = redirectTarget;
+      redirectBox.hidden = true;
+      frame.src = redirectTarget;
     }
   });
   document.getElementById("reload").addEventListener("click", function () {
@@ -309,6 +339,9 @@ _VIEWER_STYLE = (
     "font:14px/1.4 system-ui,sans-serif;color:#1b1b1b;background:#fafafa}"
     "#bar{padding:.4rem .7rem;border-bottom:1px solid #ccc;display:flex;flex-wrap:wrap;"
     "gap:.4rem .8rem;align-items:center}#notice{flex-basis:100%;font-size:.8rem;color:#6b4e00}"
+    "[hidden]{display:none!important}"
+    "#redirect{flex-basis:100%;display:flex;gap:.6rem;align-items:center;padding:.3rem .5rem;"
+    "background:#fff8e1;border:1px solid #c90;border-radius:4px}"
     "#address{flex:1;min-width:10rem;font-family:ui-monospace,monospace;word-break:break-all}"
     "button{font-size:.85rem;padding:.2rem .6rem}#frame{flex:1;width:100%;border:0;background:#fff}"
     "@media(prefers-color-scheme:dark){body{color:#eee;background:#161616}"
@@ -350,6 +383,9 @@ def viewer_page(frame_src: str, *, can_report: bool = False) -> bytes:
         f"<title>onionglass</title><style>{_VIEWER_STYLE}</style></head><body>"
         '<div id="bar"><div id="notice">'
         f"{html.escape(OPERATOR_NOTICE)}</div>"
+        '<div id="redirect" hidden><span>This page asked to be sent to another address. '
+        "Automatic redirects are off.</span>"
+        '<button id="redirect-go" type="button">Follow it</button></div>'
         '<output id="address" aria-label="Address of the page you are viewing">Loading...</output>'
         '<button id="copy" type="button">Copy address</button>'
         '<button id="reload" type="button">Reload</button>'

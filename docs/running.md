@@ -161,6 +161,15 @@ A profile with `show_entities = true` gets an "Entities" button in the viewer's 
 - **Nothing is fetched.** Looking for an entity never contacts it. The list is kept with the current page for the session and is gone when the session ends.
 - **It is a lead, not proof.** A wallet on a page may be copied from somewhere else. Sending entities on to a case system is for the integration, not this release.
 
+### The reader view
+
+Every visitor has a "Reader view" button in the viewer's toolbar. It shows pages as plain, readable text and turns the page back with "Normal view". It needs no setting, because it only ever shows less than the normal view does.
+
+- **What stays:** headings, paragraphs, lists, tables, quotes, code and links. Links still go through the gateway, and a link that leaves Tor still shows the warning page.
+- **What goes:** pictures (a bracketed note names each one, even when the profile allows images), forms, buttons, styles, menus, side bars and footers. The only attribute left on anything is a link's address.
+- **Per visitor, per session.** The choice covers every site that visitor opens until they switch it off or the session ends. Another visitor's view is not changed.
+- **Same rules otherwise.** The page is fetched, counted, audited and checked against the policy exactly as in the normal view, and goes through the same safety pass with a shorter list of allowed tags. Cost, quota and the entity panel behave as before.
+
 ### Look-alike warning
 
 Copycat onion sites are made by searching for an address that starts like a popular one: a few characters are cheap to match, and the end of an address is a checksum that cannot be chosen. With `--known-sites FILE` (or `[known_sites]` in the config file), you list the sites people are likely to mean, one per line, the address and then a name:

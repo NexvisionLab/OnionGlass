@@ -329,6 +329,32 @@ VIEWER_SCRIPT = """(function () {
   var entitiesBox = document.getElementById("entities");
   var entitiesList = document.getElementById("entities-list");
   var entitiesToggle = document.getElementById("entities-toggle");
+  var readerToggle = document.getElementById("reader-toggle");
+  var readerOn = false;
+
+  function showReader(on) {
+    readerOn = on;
+    readerToggle.textContent = on ? "Normal view" : "Reader view";
+    readerToggle.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  readerToggle.addEventListener("click", function () {
+    readerToggle.disabled = true;
+    fetch("/_og/reader", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "on=" + (readerOn ? "0" : "1")
+    })
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (data) {
+        if (data && typeof data.reader === "boolean") {
+          showReader(data.reader);
+          frame.src = frameUrl;
+        }
+      })
+      .catch(function () {})
+      .then(function () { readerToggle.disabled = false; });
+  });
 
   // Entities are shown as plain text, never as markup or links.
   function showEntities(items) {
@@ -368,6 +394,7 @@ VIEWER_SCRIPT = """(function () {
     fetch("/_og/current", { credentials: "same-origin", cache: "no-store" })
       .then(function (response) { return response.ok ? response.json() : {}; })
       .then(function (data) {
+        if (data && typeof data.reader === "boolean") { showReader(data.reader); }
         if (data && typeof data.url === "string") {
           current = data.url;
           address.textContent = data.url;
@@ -478,7 +505,9 @@ def viewer_page(
     frame_src: str, *, can_report: bool = False, can_show_entities: bool = False
 ) -> bytes:
     """The page that frames an onion site, with the real address shown above it."""
-    controls = _report_controls() if can_report else ""
+    controls = '<button id="reader-toggle" type="button" aria-pressed="false">Reader view</button>'
+    if can_report:
+        controls += _report_controls()
     if can_show_entities:
         controls += '<button id="entities-toggle" type="button" hidden>Entities</button>'
     panel = (

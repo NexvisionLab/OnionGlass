@@ -158,6 +158,40 @@ _WITHHELD_STYLE = (
     "display:inline-block;border:1px dashed #888;padding:2px 6px;"
     "font:12px sans-serif;color:#555;background:#f4f4f4"
 )
+# The reader view keeps text and its structure and nothing else: no pictures, forms, buttons or
+# page furniture, and no attribute but a link's address.
+_READER_TAGS = frozenset(
+    {
+        "a", "abbr", "address", "article", "b", "bdi", "blockquote", "br", "caption", "cite",
+        "code", "dd", "del", "dfn", "div", "dl", "dt", "em", "figcaption", "figure", "h1", "h2",
+        "h3", "h4", "h5", "h6", "header", "hr", "i", "ins", "kbd", "li", "main", "mark", "ol",
+        "p", "pre", "q", "s", "samp", "section", "small", "span", "strong", "sub", "sup",
+        "table", "tbody", "td", "tfoot", "th", "thead", "time", "tr", "u", "ul", "var", "wbr",
+    }
+)  # fmt: skip
+_READER_DROP = frozenset(
+    {
+        "nav", "aside", "footer", "form", "button", "select", "textarea", "option", "optgroup",
+        "fieldset", "datalist",
+    }
+)  # fmt: skip
+_READER_ATTRIBUTES: dict[str, set[str]] = {"a": {"href", "rel"}}
+READER_NOTICE = "Reader view. Pictures, forms, styles and page furniture are left out."
+_READER_STYLE = (
+    "body{max-width:42rem;margin:1.5rem auto;padding:0 1rem;font:1.1rem/1.6 Georgia,serif;"
+    "color:#1b1b1b;background:#fff}"
+    "body>div:first-child{font:.8rem/1.4 system-ui,sans-serif;color:#555;"
+    "border-bottom:1px solid #ccc;padding-bottom:.5rem;margin-bottom:1.5rem}"
+    "h1,h2,h3,h4,h5,h6{line-height:1.25}img{display:none}"
+    "pre{overflow:auto;background:#f4f4f4;padding:.6rem}"
+    "code,kbd,samp,pre{font-family:ui-monospace,monospace;font-size:.9em}"
+    "blockquote{margin-left:0;padding-left:1rem;border-left:3px solid #ccc;color:#444}"
+    "table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.2rem .5rem}"
+    "a{color:#0b57d0}"
+    "@media(prefers-color-scheme:dark){body{color:#e8e8e8;background:#161616}"
+    "body>div:first-child{color:#aaa;border-color:#444}pre{background:#222}"
+    "blockquote{border-color:#555;color:#bbb}td,th{border-color:#555}a{color:#8ab4ff}}"
+)
 _NOTICE_STYLE = (
     "margin:0 0 12px;padding:8px 12px;border:1px solid #c90;background:#fff8e1;"
     "color:#222;font:14px sans-serif"
@@ -188,6 +222,7 @@ class HtmlOptions:
     max_nodes: int = 200_000
     max_tags: int = 30_000
     max_output_bytes: int = 12_000_000
+    reader: bool = False  # keep only the text and its structure, for reading
 
     @property
     def css(self) -> CssOptions:
@@ -471,8 +506,49 @@ class _Emitter:
         self.out.append(">")
         return True
 
+    def _open_reader_element(self, node: LexborNode) -> tuple[bool, str]:
+        """The reader view's opening tag: text structure and links only."""
+        tag = node.tag or ""
+        if tag in _TRANSPARENT:
+            return True, ""
+        if tag in _DROP_WITH_CONTENT or tag in _READER_DROP:
+            if tag == "script":
+                self.removed_scripts += 1
+            return False, ""
+        if tag == "title":
+            if not self.title:
+                self.title = _printable(node.text(), MAX_TITLE).strip()
+            return False, ""
+        if tag == "meta":
+            self._handle_meta(node)
+            return False, ""
+        if tag in ("style", "link", "base", "input"):
+            return False, ""
+        if tag == "img":
+            self.withheld_images += 1
+            alt = _printable(node.attributes.get("alt") or "", 100)
+            label = f"image withheld: {alt}" if alt else "image withheld"
+            self.out.append(f"<em>[{html_lib.escape(label, quote=False)}]</em>")
+            return False, ""
+        if tag in ("h1", "h2") and len(self.headings) < MAX_HEADINGS:
+            self.headings.append(_printable(node.text(), MAX_TITLE).strip())
+        if tag not in _READER_TAGS:
+            return True, ""  # any other element: keep its text, lose the tag
+        self.out.append(f"<{tag}")
+        if tag == "a":
+            self.out.append(f' rel="{_ANCHOR_REL}"')
+            href = node.attributes.get("href")
+            if href is not None:
+                self._url_attribute("a", "href", href)
+        self.out.append(">")
+        if tag in _VOID:
+            return False, ""
+        return True, f"</{tag}>"
+
     def _open_element(self, node: LexborNode) -> tuple[bool, str]:
         """Handle an opening tag. Returns (descend into children, text to write on close)."""
+        if self.options.reader:
+            return self._open_reader_element(node)
         tag = node.tag or ""
         if tag in _TRANSPARENT:
             return True, ""
@@ -563,7 +639,7 @@ class _Emitter:
             current = current.next
 
 
-def _final_pass(fragment: str, mapper: UrlMapper) -> str:
+def _final_pass(fragment: str, mapper: UrlMapper, *, reader: bool = False) -> str:
     """A second, independent allowlist pass over the emitted markup."""
 
     def attribute_filter(tag: str, attribute: str, value: str) -> str | None:
@@ -586,13 +662,13 @@ def _final_pass(fragment: str, mapper: UrlMapper) -> str:
 
     return nh3.clean(
         fragment,
-        tags=set(_ALLOWED_TAGS),
-        clean_content_tags=set(_NH3_CLEAN_CONTENT),
-        attributes=_NH3_ATTRIBUTES,
+        tags=set(_READER_TAGS if reader else _ALLOWED_TAGS),
+        clean_content_tags=set(_NH3_CLEAN_CONTENT | _READER_DROP if reader else _NH3_CLEAN_CONTENT),
+        attributes=_READER_ATTRIBUTES if reader else _NH3_ATTRIBUTES,
         attribute_filter=attribute_filter,
         strip_comments=True,
         link_rel=None,
-        generic_attribute_prefixes={"aria-"},
+        generic_attribute_prefixes=None if reader else {"aria-"},
         url_schemes={"http", "https"},
     )
 
@@ -628,17 +704,22 @@ def _rewrite_html(
     fragment = "".join(emitter.out)
     if len(fragment) > options.max_output_bytes:
         raise RewriteError("rewritten page is too large")
-    cleaned = _final_pass(fragment, mapper)
+    reader = options.reader
+    cleaned = _final_pass(fragment, mapper, reader=reader)
     notice = ""
     if emitter.refresh_url:
         escaped = html_lib.escape(emitter.refresh_url, quote=True)
+        look = "" if reader else f' class="og-notice" style="{_NOTICE_STYLE}"'
         notice = (
-            f'<p class="og-notice" style="{_NOTICE_STYLE}">This page asked to redirect '
+            f"<p{look}>This page asked to redirect "
             f'automatically. Automatic redirects are off. <a href="{escaped}">Follow it</a>.</p>'
         )
-        notice = _final_pass(notice, mapper)
+        notice = _final_pass(notice, mapper, reader=reader)
     lang = _language(root)
     lang_attribute = f' lang="{html_lib.escape(lang, quote=True)}"' if lang else ""
+    view_meta = '<meta name="og-view" content="reader">' if reader else ""
+    view_style = f"<style>{_READER_STYLE}</style>" if reader else ""
+    banner = f"<div>{html_lib.escape(READER_NOTICE, quote=False)}</div>" if reader else ""
     document = (
         "<!DOCTYPE html>"
         f"<html{lang_attribute}><head>"
@@ -646,8 +727,9 @@ def _rewrite_html(
         '<meta name="referrer" content="same-origin">'
         '<meta name="robots" content="noindex, nofollow">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{html_lib.escape(emitter.title, quote=False)}</title>"
-        f"</head><body>{notice}{cleaned}</body></html>"
+        f"{view_meta}"
+        f"<title>{html_lib.escape(emitter.title, quote=False)}</title>{view_style}"
+        f"</head><body>{banner}{notice}{cleaned}</body></html>"
     )
     return RewriteResult(
         body=document.encode("utf-8"),

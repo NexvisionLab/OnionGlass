@@ -610,6 +610,8 @@ class Gateway:
             return self._metrics(request)
         if path == "/_og/report" and method == "POST" and self.settings.reports is not None:
             return await self._report(request)
+        if path == "/_og/reader" and method == "POST":
+            return await self._set_reader(request)
         if path == "/_og/viewer.js" and method == "GET":
             return self._viewer_script()
         if path == "/_og/blocked":
@@ -942,14 +944,44 @@ class Gateway:
             await self._record("report", who, origin, "report", rule=category)
         return self._json(200, pages.REPORT_MESSAGES[outcome])
 
+    async def _reader_on(self, session_id: str) -> bool:
+        """Whether this visitor asked to see pages in the reader view."""
+        return await self.store.get(f"reader:{session_id}") == "1"
+
+    async def _set_reader(self, request: Request) -> Response:
+        """A visitor turns the reader view on or off. It applies to every site they open."""
+        if not self._same_origin(request):
+            return self._json(403, "Not allowed.")
+        session_id = await self._current_session(request)
+        if session_id is None:
+            return self._json(403, "Sign in first.")
+        raw = await self._read_body(request, 64)
+        if raw is None:
+            return self._json(413, "That request is too large.")
+        fields = parse_qs(raw.decode("ascii", errors="ignore"), max_num_fields=3)
+        choice = (fields.get("on") or [""])[0]
+        if choice not in ("0", "1"):
+            return self._json(400, "Choose on or off.")
+        if choice == "1":
+            await self.store.put(f"reader:{session_id}", "1", self.settings.session_ttl)
+        else:
+            await self.store.delete(f"reader:{session_id}")
+        headers = apex_headers(self.settings.header_policy)
+        headers["Content-Type"] = "application/json"
+        return Response(json.dumps({"reader": choice == "1"}).encode("utf-8"), 200, headers)
+
     async def _current_page(self, request: Request) -> Response:
         headers = apex_headers(self.settings.header_policy)
         headers["Content-Type"] = "application/json"
         session_id = await self._current_session(request)
         if session_id is None:
             return Response(b"{}", 403, headers)
-        record = await self.store.get(f"cur:{session_id}")
-        return Response((record or "{}").encode("utf-8"), 200, headers)
+        try:
+            shown = json.loads(await self.store.get(f"cur:{session_id}") or "{}")
+        except ValueError:
+            shown = {}
+        shown["reader"] = await self._reader_on(session_id)
+        return Response(json.dumps(shown).encode("utf-8"), 200, headers)
 
     async def _gate(
         self,
@@ -1189,6 +1221,7 @@ class Gateway:
             allow_uploads=profile.allow_uploads,
             allow_password_fields=profile.allow_password_fields,
             max_bytes=profile.max_page_bytes,
+            reader=await self._reader_on(session_id),
         )
         try:
             result = await self._in_thread(

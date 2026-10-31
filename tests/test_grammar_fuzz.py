@@ -449,6 +449,8 @@ OPTION_SETS = [
     HtmlOptions(allow_images=True),
     HtmlOptions(allow_post_forms=False, allow_password_fields=False),
     HtmlOptions(allow_uploads=True, allow_images=True),
+    HtmlOptions(reader=True),
+    HtmlOptions(reader=True, allow_images=True),
 ]
 
 

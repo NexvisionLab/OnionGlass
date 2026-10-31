@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 from onionglass.audit import ADDRESS_FORMS, AuditSink, JsonLinesAudit
 from onionglass.held import HeldList
-from onionglass.hooks import HookClient, HttpAudit, HttpPolicy, HttpQuota
+from onionglass.hooks import HookClient, HttpAudit, HttpEntitySink, HttpPolicy, HttpQuota
 from onionglass.killswitch import KillSwitch
 from onionglass.lookalike import KnownSites, load_known_sites
 from onionglass.namegate import load_name_gate
@@ -54,8 +54,9 @@ PROFILE_KINDS: dict[str, type | tuple[type, ...]] = {
     "allow_uploads": bool, "allow_password_fields": bool, "max_page_bytes": int,
     "max_asset_bytes": int, "rewrite_timeout": (int, float), "max_requests_per_minute": int,
     "daily_quota": int, "open_cost": int, "page_cost": int, "show_entities": bool,
+    "send_entities": bool,
 }  # fmt: skip
-HOOK_USES = frozenset({"policy", "audit", "quota"})
+HOOK_USES = frozenset({"policy", "audit", "quota", "entities"})
 MAX_SECRET_BYTES = 16_384
 # Windows has no file modes to check. Tests turn this on to prove the check works.
 _HAS_FILE_MODES = os.name != "nt"
@@ -285,7 +286,7 @@ def _hooks(reader: _Reader, timeout: float) -> tuple[HookClient | None, dict[str
         raise ConfigError("[hooks] needs url, key_id, signing_key_file and response_keys")
     uses = _get(table, "use", list, "[hooks]") or []
     if not uses or not all(isinstance(u, str) and u in HOOK_USES for u in uses):
-        raise ConfigError("[hooks].use must list some of: policy, audit, quota")
+        raise ConfigError("[hooks].use must list some of: policy, audit, quota, entities")
     ring = _key_ring(reader, table.get("response_keys"), "[hooks].response_keys")
     try:
         client = HookClient(
@@ -320,6 +321,10 @@ def _build_hook_parts(client: HookClient | None, hook: dict[str, Any]) -> dict[s
         parts["audit"] = HttpAudit(client, address_form=hook["audit_form"], salt=hook["audit_salt"])
     if "quota" in uses:
         parts["quota"] = HttpQuota(client)
+    if "entities" in uses:
+        parts["entity_sink"] = HttpEntitySink(
+            client, address_form=hook["audit_form"], salt=hook["audit_salt"]
+        )
     return parts
 
 
@@ -437,13 +442,14 @@ def _limits(reader: _Reader) -> dict[str, Any]:
             "session_hours", "max_labels_per_session", "max_labels_per_page",
             "max_new_sessions_per_minute", "max_concurrent_fetches", "max_fetches_per_session",
             "max_request_body", "max_reports_per_session", "hook_timeout", "max_opens_per_session",
+            "max_entity_sends_per_session",
         },
     )  # fmt: skip
     found: dict[str, Any] = {}
     for key in (
         "max_labels_per_session", "max_labels_per_page", "max_new_sessions_per_minute",
         "max_concurrent_fetches", "max_fetches_per_session", "max_request_body",
-        "max_reports_per_session", "max_opens_per_session",
+        "max_reports_per_session", "max_opens_per_session", "max_entity_sends_per_session",
     ):  # fmt: skip
         value = _get(table, key, int, "[limits]")
         if value is not None:

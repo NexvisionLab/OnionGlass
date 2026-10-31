@@ -237,9 +237,9 @@ def test_the_script_only_displays_text_and_only_talks_to_the_gateway() -> None:
     ):
         assert dangerous not in VIEWER_SCRIPT, dangerous
     assert "textContent" in VIEWER_SCRIPT
-    # The script talks to three paths on the gateway itself, and nothing else.
-    assert VIEWER_SCRIPT.count("fetch(") == 3
-    for path in ("/_og/current", "/_og/report", "/_og/reader"):
+    # The script talks to four paths on the gateway itself, and nothing else.
+    assert VIEWER_SCRIPT.count("fetch(") == 4
+    for path in ("/_og/current", "/_og/report", "/_og/reader", "/_og/send-entities"):
         assert f'fetch("{path}"' in VIEWER_SCRIPT
     assert "http://" not in VIEWER_SCRIPT and "https://" not in VIEWER_SCRIPT
 

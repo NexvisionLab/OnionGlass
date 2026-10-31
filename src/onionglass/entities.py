@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from typing import Protocol
 
 from onionglass.onion import InvalidOnionError
 from onionglass.policy import address_of
@@ -48,6 +49,32 @@ _MONERO = re.compile(_NOT_AFTER + r"[48][1-9A-HJ-NP-Za-km-z]{94}" + _NOT_BEFORE)
 class Entity:
     kind: str
     value: str
+
+
+class SinkError(Exception):
+    """The entities could not be handed on."""
+
+
+@dataclass(frozen=True, slots=True)
+class EntityBatch:
+    """What a visitor sends on: the entities found on one page, who sent them and from where.
+
+    The page's own text and title are never part of it.
+    """
+
+    subject: str
+    group: str
+    profile: str
+    origin: str  # scheme://host:port of the onion site
+    path: str  # path and query of the page
+    entities: tuple[Entity, ...]
+    time: float  # seconds since the epoch
+
+
+class EntitySink(Protocol):
+    """Anything that can take a batch, such as a case system. Failing raises ``SinkError``."""
+
+    async def send(self, batch: EntityBatch) -> None: ...
 
 
 # --- Keccak-256, which the Ethereum and Monero checksums need ----------------------------

@@ -159,7 +159,8 @@ A profile with `show_entities = true` gets an "Entities" button in the viewer's 
 - **Onion addresses** are listed with their checksum checked, and the sub-domain is dropped.
 - **Only what the page shows is read.** Text inside scripts, style sheets and attributes is not. Up to 500,000 characters of a page are read, and at most 100 entities are listed, 40 of any one kind.
 - **Nothing is fetched.** Looking for an entity never contacts it. The list is kept with the current page for the session and is gone when the session ends.
-- **It is a lead, not proof.** A wallet on a page may be copied from somewhere else. Sending entities on to a case system is for the integration, not this release.
+- **It is a lead, not proof.** A wallet on a page may be copied from somewhere else.
+- **Sending them on is optional.** A profile with `send_entities = true` (it needs `show_entities`) gets a "Send these on" button in the panel. It hands the list to the service named in `[hooks]` when `"entities"` is in `use`, in the signed form described in `docs/integration-api.md`. Nothing is sent unless the visitor presses it. Only what the gateway itself found is sent, never the page's text or title, and the site is named in the form chosen for the audit log. Each send is on the audit record before it is made, and a session can send 20 times (`max_entity_sends_per_session`, cleared after 24 hours without a send). If the service cannot be reached, the visitor is told and the attempt is not counted.
 
 ### The reader view
 

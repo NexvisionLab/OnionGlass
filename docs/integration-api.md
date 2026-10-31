@@ -21,6 +21,7 @@ Status: draft, no stable version. The shapes below will change before version 1.
 | Evidence sink | Gateway calls out | Receives captures, manifests and hashes | Local folder or S3-compatible store | Capture fails, browsing continues |
 | Quota | Gateway calls out | Check and consume allowance | Local counters | Refuse the request in a quota-limited profile |
 | Intel | Gateway calls out | Data for the panel beside a page | What this instance itself knows | Panel shows local data only |
+| Entity sink | Gateway calls out | The entities on the page a visitor is looking at, when they press a button | Off | The visitor is told it could not be sent |
 | Entity extraction | Gateway calls out | Wallets, emails, handles and keys found in a page | Built-in pattern matching | Built-in extraction only |
 | Translation | Gateway calls out | Translate page text | Any LibreTranslate-compatible URL | Translation unavailable |
 | Discovery event | Gateway calls out | An unknown onion was opened | Off | Event is dropped |
@@ -40,7 +41,7 @@ A policy receives who is asking (profile, group, subject), the onion origin and 
 
 ## The signed HTTP hooks
 
-The gateway calls your service with `POST` and a JSON body, to `<base>/policy`, `<base>/audit`, `<base>/quota/used` and `<base>/quota/charge`. The base address must be `https`, except for this machine, or when the operator says plain `http` is acceptable on a private network. The gateway checks the service's certificate and name, does not follow redirects, uses a new connection for each call, and reads at most 64 KiB of reply. Your service does not have to know anything about onionglass beyond this page, and nothing of it is loaded into the gateway.
+The gateway calls your service with `POST` and a JSON body, to `<base>/policy`, `<base>/audit`, `<base>/quota/used`, `<base>/quota/charge`, `<base>/quota/reserve` and `<base>/entities`. The base address must be `https`, except for this machine, or when the operator says plain `http` is acceptable on a private network. The gateway checks the service's certificate and name, does not follow redirects, uses a new connection for each call, and reads at most 64 KiB of reply. Your service does not have to know anything about onionglass beyond this page, and nothing of it is loaded into the gateway.
 
 ### Signing
 
@@ -69,6 +70,8 @@ Every request body has `"v": 1`. Fields you do not know must be ignored, so that
 **`/audit`** receives `{"event": {...}}` with `kind`, `action`, `rule`, `profile`, `group`, `subject`, `origin`, `path`, `status` and `time`. The site is named in the form the operator chose, the same as in the local log: `full` sends origin and path, `origin` (the default) sends the origin and an empty path, `hash` sends `h:` and a keyed hash with an empty path, and `none` sends an empty origin and path. Reply `{"ok": true}`. Anything else makes the gateway refuse the request that the event describes, because nothing may happen that is not on record.
 
 **`/quota/used`** receives `subject` and `profile` and replies `{"used": <whole number>}`. **`/quota/charge`** receives `subject`, `profile` and `units`, adds them to today's count, and replies with the new total in the same form. **`/quota/reserve`** receives `subject`, `profile`, `units` and `limit`. It must, as one step that no other request can come between, check that today's count plus `units` is not over `limit`, and if so add `units` and reply `{"ok": true, "used": <new total>}`, otherwise change nothing and reply `{"ok": false}`. The gateway uses it for opens, so that requests arriving together cannot overspend an allowance.
+
+**`/entities`** receives `{"batch": {...}}` with `subject`, `group`, `profile`, `origin`, `path`, `entities` and `time`. `entities` is a list of `{"kind": ..., "value": ...}` where kind is `bitcoin`, `ethereum`, `monero`, `email` or `onion`, each already checked by the gateway. `time` is whole seconds since the epoch. The site is named in the audit form the operator chose, as for `/audit`. The page's own text and title are never sent. A batch is sent only when a visitor presses the button, it holds only what the gateway itself found on the page they are looking at, and the send is on the audit record first (`kind` `entities`, `action` `send`, `rule` the number of entities). Reply `{"ok": true}`. Anything else tells the visitor it could not be sent, and does not use up their allowance (`max_entity_sends_per_session`, 20 by default, counted per session and cleared after 24 hours without a send). To turn it on, add `"entities"` to `[hooks].use` and set `send_entities = true` on the profiles that may use it. That setting needs `show_entities` too, because a visitor sends what the panel shows.
 
 ### Keeping answers
 

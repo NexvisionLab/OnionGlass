@@ -56,6 +56,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from onionglass.audit import ADDRESS_FORMS, AddressForm, AuditEvent, in_address_form
+from onionglass.entities import EntityBatch, SinkError
 from onionglass.policy import Decision, PolicyRequest
 from onionglass.tickets import KeyRing, is_valid_key_id
 
@@ -392,6 +393,59 @@ class HttpAudit:
         data = await self._client.call("/audit", {"event": asdict(shown)})
         if not _expect_bool(data, "ok"):
             raise HookError("the audit service did not accept the event")
+
+
+class HttpEntitySink:
+    """An entity sink that hands each batch to a service, which must confirm it.
+
+    The onion site is named in the form the operator chose for the audit log, so a service never
+    learns more about where the entities came from than the audit record does.
+    """
+
+    def __init__(
+        self,
+        client: HookClient,
+        *,
+        address_form: AddressForm = "origin",
+        salt: bytes | None = None,
+    ) -> None:
+        if address_form not in ADDRESS_FORMS:
+            raise ValueError(f"address form must be one of {ADDRESS_FORMS}")
+        self._client = client
+        self._form = address_form
+        self._salt = salt or secrets.token_bytes(32)
+
+    async def send(self, batch: EntityBatch) -> None:
+        place = in_address_form(
+            AuditEvent(
+                kind="entities",
+                action="send",
+                rule="",
+                profile=batch.profile,
+                group=batch.group,
+                subject=batch.subject,
+                origin=batch.origin,
+                path=batch.path,
+            ),
+            self._form,
+            self._salt,
+        )
+        body = {
+            "subject": batch.subject,
+            "group": batch.group,
+            "profile": batch.profile,
+            "origin": place.origin,
+            "path": place.path,
+            "entities": [{"kind": e.kind, "value": e.value} for e in batch.entities],
+            "time": int(batch.time),
+        }
+        try:
+            data = await self._client.call("/entities", {"batch": body})
+            accepted = _expect_bool(data, "ok")
+        except HookError as exc:
+            raise SinkError(str(exc)) from exc
+        if not accepted:
+            raise SinkError("the service did not accept the entities")
 
 
 class HttpQuota:

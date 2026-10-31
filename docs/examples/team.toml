@@ -36,6 +36,7 @@ max_labels_per_session = 1000
 max_opens_per_session = 100     # addresses one session may type in
 max_labels_per_page = 100
 max_reports_per_session = 10
+max_entity_sends_per_session = 20   # times a session may send entities on
 hook_timeout = 2.0               # seconds a policy, audit or quota service has to answer
 
 # The profile for a ticket that names no other, and for every session if you use only one.
@@ -61,6 +62,7 @@ page_cost = 0
 [profiles.analyst]
 allow_images = true
 show_entities = true            # list wallets, emails and onion addresses the page names
+# send_entities = true          # adds a button that sends that list to the service in [hooks]
 max_requests_per_minute = 300
 
 [policy]
@@ -107,7 +109,7 @@ file = "state/quota.log"         # keeps daily counts across restarts
 # key_id = "gateway-2026-10"
 # signing_key_file = "secrets/gateway.private.pem"
 # response_keys = [{ id = "service-2026-10", public_key_file = "keys/service-2026-10.public.pem" }]
-# use = ["policy", "audit", "quota"]
+# use = ["policy", "audit", "quota"]    # add "entities" to let a profile send entities on
 # cache_seconds = 5
 # audit_address_form = "origin"    # what the audit service is told: full, origin, hash or none
 # audit_salt_file = "secrets/audit.salt"  # keys the hash form, so it can be compared later

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
 from onionglass.audit import AuditSink
+from onionglass.entities import EntitySink
 from onionglass.headers import HeaderPolicy
 from onionglass.held import HeldList
 from onionglass.hosts import GatewayHosts
@@ -47,6 +48,7 @@ class Profile:
     allow_images: bool = False
     allow_fonts: bool = True
     show_entities: bool = False  # list the wallets, emails and onion addresses a page names
+    send_entities: bool = False  # let the visitor send that list on to the entity sink
     allow_post_forms: bool = True
     allow_uploads: bool = False
     allow_password_fields: bool = True
@@ -65,6 +67,10 @@ class Profile:
             raise ValueError("the request limit must be at least 1")
         if self.open_cost < 0 or self.page_cost < 0:
             raise ValueError("costs cannot be negative")
+        if self.send_entities and not self.show_entities:
+            raise ValueError(
+                "send_entities needs show_entities, since the visitor sends what is shown"
+            )
         self._check_numbers()
         if self.daily_quota is not None:
             if self.daily_quota < 1:
@@ -143,6 +149,8 @@ class Settings:
     held: HeldList | None = None
     reports: ReportQueue | None = None
     max_reports_per_session: int = 10
+    entity_sink: EntitySink | None = None
+    max_entity_sends_per_session: int = 20
     metrics_token: str | None = None
     name_gate: NameGate | None = None
     hook_timeout: float = 2.0
@@ -169,6 +177,7 @@ class Settings:
             "max_fetches_per_session": self.max_fetches_per_session,
             "max_request_body": self.max_request_body,
             "max_reports_per_session": self.max_reports_per_session,
+            "max_entity_sends_per_session": self.max_entity_sends_per_session,
             "name_gate_hold_after": self.name_gate_hold_after,
         }
         for label, number in counts.items():
@@ -194,6 +203,10 @@ class Settings:
             or " " in self.metrics_token
         ):
             raise ValueError("the metrics token must be 16 or more printable characters, no spaces")
+        if self.entity_sink is None and any(
+            p.send_entities for p in (self.profile, *self.profiles.values())
+        ):
+            raise ValueError("a profile sends entities but no entity sink is configured")
         if self.name_gate is not None and self.held is None:
             raise ValueError("a name gate needs a held list, or it could only refuse once")
         if self.quota is None and any(

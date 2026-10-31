@@ -378,6 +378,24 @@ VIEWER_SCRIPT = """(function () {
       entitiesBox.hidden = !entitiesBox.hidden;
     });
   }
+  var sendButton = document.getElementById("entities-send");
+  if (sendButton) {
+    var sendStatus = document.getElementById("entities-send-status");
+    sendButton.addEventListener("click", function () {
+      sendButton.disabled = true;
+      sendStatus.textContent = "Sending...";
+      fetch("/_og/send-entities", { method: "POST", credentials: "same-origin" })
+        .then(function (response) {
+          return response.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          var said = data && typeof data.message === "string" ? data.message : "";
+          sendStatus.textContent = said || "The entities could not be sent.";
+        })
+        .catch(function () { sendStatus.textContent = "The entities could not be sent."; })
+        .then(function () { sendButton.disabled = false; });
+    });
+  }
 
   // Only an address on this gateway may be followed from the toolbar.
   function onThisGateway(value) {
@@ -502,7 +520,11 @@ def _report_controls() -> str:
 
 
 def viewer_page(
-    frame_src: str, *, can_report: bool = False, can_show_entities: bool = False
+    frame_src: str,
+    *,
+    can_report: bool = False,
+    can_show_entities: bool = False,
+    can_send_entities: bool = False,
 ) -> bytes:
     """The page that frames an onion site, with the real address shown above it."""
     controls = '<button id="reader-toggle" type="button" aria-pressed="false">Reader view</button>'
@@ -510,8 +532,16 @@ def viewer_page(
         controls += _report_controls()
     if can_show_entities:
         controls += '<button id="entities-toggle" type="button" hidden>Entities</button>'
+    send = (
+        '<button id="entities-send" type="button">Send these on</button>'
+        '<output id="entities-send-status" aria-live="polite"></output>'
+        if can_show_entities and can_send_entities
+        else ""
+    )
     panel = (
-        '<div id="entities" hidden><ul id="entities-list"></ul></div>' if can_show_entities else ""
+        f'<div id="entities" hidden><ul id="entities-list"></ul>{send}</div>'
+        if can_show_entities
+        else ""
     )
     document = (
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'

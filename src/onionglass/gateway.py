@@ -37,7 +37,7 @@ from onionglass import pages
 from onionglass.audit import AuditEvent
 from onionglass.cookies import CookieJar, RequestContext
 from onionglass.decode import DecodeError, decode_body
-from onionglass.entities import extract_entities
+from onionglass.entities import Entity, EntityBatch, extract_entities
 from onionglass.headers import (
     ACCEPT_ANY,
     ACCEPT_HTML,
@@ -608,15 +608,25 @@ class Gateway:
             return await self._current_page(request)
         if path == "/_og/metrics" and method == "GET" and self.settings.metrics_token is not None:
             return self._metrics(request)
-        if path == "/_og/report" and method == "POST" and self.settings.reports is not None:
-            return await self._report(request)
-        if path == "/_og/reader" and method == "POST":
-            return await self._set_reader(request)
+        if method == "POST" and path.startswith("/_og/"):
+            answered = await self._apex_action(path, request)
+            if answered is not None:
+                return answered
         if path == "/_og/viewer.js" and method == "GET":
             return self._viewer_script()
         if path == "/_og/blocked":
             return self._apex(pages.blocked_page(), 403)
         return self._apex_fixed(path) or self._error("not_found", apex=True)
+
+    async def _apex_action(self, path: str, request: Request) -> Response | None:
+        """The viewer's own actions: each a POST from the visitor's page, answered in JSON."""
+        if path == "/_og/report" and self.settings.reports is not None:
+            return await self._report(request)
+        if path == "/_og/reader":
+            return await self._set_reader(request)
+        if path == "/_og/send-entities":
+            return await self._send_entities(request)
+        return None
 
     def _apex_fixed(self, path: str) -> Response | None:
         """The two answers that never change: the health check and the robots file."""
@@ -844,6 +854,11 @@ class Gateway:
             source,
             can_report=self.settings.reports is not None,
             can_show_entities=profile is not None and profile.show_entities,
+            can_send_entities=(
+                profile is not None
+                and profile.send_entities
+                and self.settings.entity_sink is not None
+            ),
         )
         return Response(page, 200, viewer_headers(self.settings.header_policy))
 
@@ -943,6 +958,64 @@ class Gateway:
             await self.store.put(counter, str(sent + 1), 86_400)
             await self._record("report", who, origin, "report", rule=category)
         return self._json(200, pages.REPORT_MESSAGES[outcome])
+
+    async def _entities_shown(self, session_id: str) -> tuple[OnionUrl, tuple[Entity, ...]] | None:
+        """The page this visitor is looking at and the entities found on it, or None if there are
+        none. Only what the gateway itself kept is used, never what the visitor's browser says."""
+        try:
+            shown = json.loads(await self.store.get(f"cur:{session_id}") or "{}")
+            page = parse_onion_url(str(shown["url"]))
+            found = tuple(
+                Entity(item["kind"], item["value"])
+                for item in shown["entities"]
+                if isinstance(item["kind"], str) and isinstance(item["value"], str)
+            )
+        except (ValueError, KeyError, TypeError, InvalidOnionError):
+            return None
+        return (page, found) if found else None
+
+    async def _send_entities(self, request: Request) -> Response:
+        """A visitor sends the entities of the page they are looking at to the entity sink.
+
+        Nothing is sent unless they press the button, only what the gateway found is sent, and the
+        send is on the audit record before it happens.
+        """
+        sink = self.settings.entity_sink
+        if sink is None or not self._same_origin(request):
+            return self._json(403, "Not allowed.")
+        session_id = await self._current_session(request)
+        if session_id is None:
+            return self._json(403, "Sign in first.")
+        who = await self._who_of(session_id)
+        profile = self.settings.profile_named(who.profile)
+        if profile is None or not profile.send_entities:
+            return self._json(403, "Not allowed.")
+        if await self._read_body(request, 1024) is None:
+            return self._json(413, "That request is too large.")
+        shown = await self._entities_shown(session_id)
+        if shown is None:
+            return self._json(400, "There is nothing to send yet.")
+        page, found = shown
+        counter = f"ent:{session_id}"
+        sent = int(await self.store.get(counter) or 0)
+        if sent >= self.settings.max_entity_sends_per_session:
+            return self._json(429, "You have sent as much as is allowed for now.")
+        place = page.path + (f"?{page.query}" if page.query else "")
+        if not await self._record(
+            "entities", who, page.origin, "send", rule=str(len(found)), path=place
+        ):
+            return self._json(503, "The send could not be recorded, so it was not made.")
+        batch = EntityBatch(
+            who.subject, who.group, who.profile, page.origin.key, place, found, time.time()
+        )
+        try:
+            await asyncio.wait_for(sink.send(batch), timeout=self.settings.hook_timeout)
+        except Exception:
+            _log.warning("entities could not be sent")
+            return self._json(502, "The entities could not be sent. Try again later.")
+        await self.store.put(counter, str(sent + 1), 86_400)
+        noun = "entity" if len(found) == 1 else "entities"
+        return self._json(200, f"Sent {len(found)} {noun}.")
 
     async def _reader_on(self, session_id: str) -> bool:
         """Whether this visitor asked to see pages in the reader view."""

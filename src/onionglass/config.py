@@ -47,6 +47,14 @@ SECTIONS = frozenset(
     }
 )  # fmt: skip
 PROFILE_FIELDS = frozenset(f.name for f in fields(Profile))
+# The type each profile field takes from the config file. A field missing here would be accepted
+# by the file check and then ignored, so a test keeps this in step with ``Profile``.
+PROFILE_KINDS: dict[str, type | tuple[type, ...]] = {
+    "name": str, "allow_images": bool, "allow_fonts": bool, "allow_post_forms": bool,
+    "allow_uploads": bool, "allow_password_fields": bool, "max_page_bytes": int,
+    "max_asset_bytes": int, "rewrite_timeout": (int, float), "max_requests_per_minute": int,
+    "daily_quota": int, "open_cost": int, "page_cost": int, "show_entities": bool,
+}  # fmt: skip
 HOOK_USES = frozenset({"policy", "audit", "quota"})
 MAX_SECRET_BYTES = 16_384
 # Windows has no file modes to check. Tests turn this on to prove the check works.
@@ -221,13 +229,7 @@ def _profile(reader: _Reader, table: Mapping[str, Any], where: str, name: str | 
         raise ConfigError(f"{where}.preset must be 'default' or 'restricted'")
     profile = Profile.restricted() if preset == "restricted" else Profile()
     changes: dict[str, Any] = {}
-    kinds: dict[str, type | tuple[type, ...]] = {
-        "name": str, "allow_images": bool, "allow_fonts": bool, "allow_post_forms": bool,
-        "allow_uploads": bool, "allow_password_fields": bool, "max_page_bytes": int,
-        "max_asset_bytes": int, "rewrite_timeout": (int, float), "max_requests_per_minute": int,
-        "daily_quota": int, "open_cost": int, "page_cost": int,
-    }  # fmt: skip
-    for key, kind in kinds.items():
+    for key, kind in PROFILE_KINDS.items():
         value = _get(data, key, kind, where)
         if value is not None:
             changes[key] = float(value) if key == "rewrite_timeout" else value

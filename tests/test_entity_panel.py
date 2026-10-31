@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from helpers import DUCKDUCKGO
+from onionglass.config import PROFILE_FIELDS, PROFILE_KINDS, load_config
 from onionglass.settings import Profile
+from test_config import Layout
 from test_entities import GENESIS, SEGWIT, monero_address
 from test_gateway import Env, reply
 
@@ -88,3 +91,18 @@ def test_entities_are_not_kept_for_a_request_that_is_not_a_page_view() -> None:
 def test_the_switch_is_off_in_the_restricted_preset_and_in_text_only_form(field: str) -> None:
     assert getattr(Profile.restricted(), field) is False
     assert getattr(Profile(name="x", show_entities=True).text_only(), field) is True
+
+
+def test_the_config_file_can_switch_the_panel_on(tmp_path: Path) -> None:
+    """A switch that the config file accepts but ignores would leave the panel off for ever."""
+    layout = Layout(tmp_path)
+    settings = load_config(layout.config).settings
+    assert settings.profile_named("analyst").show_entities is True  # type: ignore[union-attr]
+    assert settings.profile.show_entities is False
+    layout.edit("[profile]", "[profile]\nshow_entities = true")
+    assert load_config(layout.config).settings.profile.show_entities is True
+
+
+def test_every_profile_field_can_be_set_from_the_config_file() -> None:
+    """The file check accepts every profile field, so each must also be applied."""
+    assert set(PROFILE_KINDS) == set(PROFILE_FIELDS)

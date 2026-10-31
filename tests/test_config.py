@@ -564,7 +564,8 @@ def test_serve_starts_the_gateway_the_way_a_proxy_expects(
 
 def test_personal_mode_is_untouched_by_the_new_commands() -> None:
     assert cli.parse_arguments([]).port == 8080
-    assert {"serve", "check-config", "keys", "ticket", "admin", "domains"} == cli.TEAM_COMMANDS
+    team = {"serve", "check-config", "keys", "ticket", "admin", "domains", "check-tor"}
+    assert team == cli.TEAM_COMMANDS
 
 
 def test_the_private_key_is_created_for_its_owner_only_and_never_over_another_file(

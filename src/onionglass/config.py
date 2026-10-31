@@ -650,6 +650,20 @@ def parse_config(data: Mapping[str, Any], base: Path, entry: str | None = None) 
     return TeamConfig(settings=settings, tor=tor, listen=listen, port=port)
 
 
+def tor_endpoints(path: str | Path) -> list[tuple[str, int]]:
+    """The Tor processes a config file names, as (host, port), without loading the rest of it, so
+    that a machine without the keys and lists can still check its Tor."""
+    config_path = Path(path)
+    try:
+        data = tomllib.loads(config_path.read_bytes().decode("utf-8"))
+    except OSError as exc:
+        raise ConfigError(f"cannot read {config_path}: {exc.strerror}") from exc
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"{config_path.name} is not valid TOML: {exc}") from exc
+    tor = _tor(_Reader(data, config_path.resolve().parent))
+    return list(tor.endpoints) or [(tor.socks_host, port) for port in tor.socks_ports]
+
+
 def load_config(path: str | Path, entry: str | None = None) -> TeamConfig:
     """Read a config file. Raises ``ConfigError`` for anything wrong with it."""
     config_path = Path(path)

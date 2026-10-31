@@ -36,7 +36,13 @@ from onionglass.admin import (
     paths_from_config,
     reports_summary,
 )
-from onionglass.config import ConfigError, TeamConfig, load_config, load_private_key
+from onionglass.config import (
+    ConfigError,
+    TeamConfig,
+    load_config,
+    load_private_key,
+    tor_endpoints,
+)
 from onionglass.entries import (
     entries_in,
     next_port,
@@ -48,9 +54,10 @@ from onionglass.gateway import Gateway
 from onionglass.hooks import HttpAudit, HttpPolicy, HttpQuota
 from onionglass.hosts import GatewayHosts
 from onionglass.tickets import TicketIssuer, generate_key
+from onionglass.torcheck import TorStatus, check_tor
 from onionglass.upstream import TorFetcher
 
-COMMANDS = frozenset({"serve", "check-config", "keys", "ticket", "admin", "domains"})
+COMMANDS = frozenset({"serve", "check-config", "keys", "ticket", "admin", "domains", "check-tor"})
 ENTRY_HELP = "run, check or work on this entry (see [entries] in the config file)"
 
 
@@ -83,7 +90,50 @@ def _parser() -> argparse.ArgumentParser:
     ticket.add_argument("--seconds", type=int, default=60, help="how long the link works")
     _admin_parser(commands)
     _domains_parser(commands)
+    tor = commands.add_parser(
+        "check-tor", help="check that Tor is running and can find onion sites"
+    )
+    tor.add_argument(
+        "--config", type=Path, help="check the Tor processes named in this config file"
+    )
+    tor.add_argument("--tor-host", default="127.0.0.1", help="where Tor listens")
+    tor.add_argument("--tor-port", type=int, action="append", help="a Tor SOCKS port (9050)")
+    tor.add_argument("--wait", type=_wait, default=30.0, help="seconds to give the lookup")
     return parser
+
+
+def _wait(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = 0.0
+    if not 0 < seconds <= 300:
+        raise argparse.ArgumentTypeError("the wait must be above 0 and at most 300 seconds")
+    return seconds
+
+
+def _check_tor(args: argparse.Namespace) -> int:
+    """Try every Tor and say, for each, whether it works and what is wrong if not."""
+    try:
+        if args.config is not None:
+            where = tor_endpoints(args.config)
+        else:
+            where = [(args.tor_host, port) for port in args.tor_port or [9050]]
+    except ConfigError as exc:
+        print(f"onionglass: config error: {exc}", file=sys.stderr)
+        return 2
+
+    async def every() -> list[TorStatus]:
+        return list(
+            await asyncio.gather(*(check_tor(host, port, wait=args.wait) for host, port in where))
+        )
+
+    results = asyncio.run(every())
+    for status in results:
+        label = "ok  " if status.ok else "FAIL"
+        detail = status.message if status.ok else f"[{status.state}] {status.message}"
+        print(f"{label} {detail}")
+    return 0 if all(status.ok for status in results) else 1
 
 
 def _seconds(value: str) -> float:
@@ -446,6 +496,8 @@ def _without_a_gateway(args: argparse.Namespace) -> int | None:
         return _admin(args)
     if args.command == "domains":
         return _domains(args)
+    if args.command == "check-tor":
+        return _check_tor(args)
     return None
 
 

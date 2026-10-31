@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 from collections.abc import Sequence
@@ -21,10 +22,13 @@ from onionglass.pages import OPERATOR_NOTICE
 from onionglass.policy import PolicyConfigError, StaticPolicy, load_address_list
 from onionglass.reports import ReportError, ReportQueue
 from onionglass.settings import Profile, Settings
+from onionglass.torcheck import check_tor_quickly
 from onionglass.upstream import TorConfig, TorFetcher
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
-TEAM_COMMANDS = frozenset({"serve", "check-config", "keys", "ticket", "admin", "domains"})
+TEAM_COMMANDS = frozenset(
+    {"serve", "check-config", "keys", "ticket", "admin", "domains", "check-tor"}
+)
 # Inside a container the gateway must listen on all the container's addresses so the published
 # port reaches it. The container image sets this variable, and the compose file publishes the
 # port on the host's loopback address only.
@@ -183,6 +187,19 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _warn_if_tor_is_missing(host: str, ports: Sequence[int]) -> None:
+    """Say so at start-up if Tor is not there. It is a warning and not a refusal, since Tor may
+    be started a moment later, but pages cannot load until it is."""
+    for port in ports:
+        status = asyncio.run(check_tor_quickly(host, port))
+        if not status.ok:
+            print(
+                f"onionglass: warning: {status.message} Pages will not load until Tor is "
+                "running. To check it, run: onionglass check-tor",
+                file=sys.stderr,
+            )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(argv) if argv is not None else sys.argv[1:]
     if arguments and arguments[0] in TEAM_COMMANDS:
@@ -224,6 +241,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except PolicyConfigError as exc:
         print(f"onionglass: {exc}", file=sys.stderr)
         return 2
+    _warn_if_tor_is_missing(args.tor_host, args.tor_port or (9050,))
     print(f"onionglass is running. Open http://localhost:{public_port}/ in your browser.")
     print(OPERATOR_NOTICE)
     # Access logging stays off: a log of requests would be a log of the sites you looked at.

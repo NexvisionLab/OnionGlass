@@ -106,7 +106,7 @@ The gateway needs a Tor SOCKS port, on 9050 by default. Tor's own packages are t
 | Windows | Download the Tor Expert Bundle from [torproject.org/download/tor](https://www.torproject.org/download/tor/), unpack it, and run `tor.exe`. With no config file it opens port 9050. |
 | Any, if Tor Browser is running | Tor Browser's own Tor listens on port 9150. Start the gateway with `--tor-port 9150`. Error pages are less specific, because Tor Browser does not turn on Tor's detailed failure reasons. |
 
-Check that the port is open before going on. On Linux or macOS, `ss -ltn | grep 9050` or `lsof -i :9050`. On Windows, `netstat -ano | findstr 9050`.
+Once onionglass is installed (step 2), `onionglass check-tor` checks it for you. It says whether anything is listening on the port, whether it is Tor, and whether it can find onion sites, and if not, what is wrong. A Tor that has only just started needs a minute before it can reach the network. You can also look at the port yourself: on Linux or macOS `ss -ltn | grep 9050` or `lsof -i :9050`, and on Windows `netstat -ano | findstr 9050`.
 
 ### 2. Install onionglass
 
@@ -320,6 +320,7 @@ The properties, the threats against them and the tests that prove each one are l
 | `quota`, `audit`, `reports`, `metrics` | Allowances, the audit log, visitor reports, Prometheus metrics. |
 | `tickets`, `hooks` | Sign-in tickets and key rings, the signed HTTP hooks. |
 | `entities` | Wallet, email and onion address extraction with checksums, and the entity batch. |
+| `torcheck` | The Tor check: whether Tor is there, is Tor, and can find onion sites. |
 | `cover`, `entries`, `reach` | Cover mode, the entry domains for each group of users, and the check of where a domain is blocked. |
 | `translate`, `httpexchange` | The translation client, and the HTTP exchange it shares with the hooks. |
 | `settings`, `config`, `cli`, `teamcli`, `admin` | Profiles and settings, the config loader, the commands. |
@@ -358,7 +359,7 @@ Everything above also runs in continuous integration on Python 3.11, 3.12 and 3.
 
 | What you see | Likely cause |
 |---|---|
-| "Tor is not available" | Tor is not running, or the port is wrong. Check `--tor-port`. |
+| "Tor is not available" | Tor is not running, or the port is wrong. Run `onionglass check-tor`, which says which, and use `--tor-port` for another port. |
 | "Site not found" | The onion site is offline or the address is wrong. |
 | "Could not reach the site" | The site is busy. Try again in a minute. |
 | "The page could not be shown safely" | The page was too large or complex to make safe. |

@@ -31,6 +31,27 @@ Useful options:
 | `--tor-host 127.0.0.1` | Where Tor listens. |
 | `--allow-images` | Load images from onion sites. Off by default, and when it is off no image is ever requested. |
 
+### Checking Tor
+
+```
+onionglass check-tor
+onionglass check-tor --tor-port 9150
+onionglass check-tor --config team.toml        # every Tor the config file names
+```
+
+For each Tor it prints `ok` or `FAIL`, and for a failure one of these words with a sentence of advice:
+
+- `not_listening`: nothing is on that port. Start Tor, or give the right port.
+- `not_socks`: something answers but does not speak SOCKS5, so it is not Tor's SOCKS port.
+- `no_login`: it speaks SOCKS5 but will not take the user name and password that onionglass uses to keep visitors apart, so it may not be Tor.
+- `starting`: Tor answers but cannot reach the Tor network yet. Wait a minute and try again.
+- `slow`: Tor took longer than `--wait` seconds (30 by default) to finish a lookup.
+- `refused`: Tor answered the lookup with a refusal, named in the message.
+
+To know whether Tor is connected, it asks Tor to find an onion address that it has just made up, which cannot exist. That is a question only an onion lookup can answer, and Tor never sends it through an exit, so it cannot reach a site on the ordinary internet. The answer tells it whether Tor looked. A Tor without detailed error reasons, such as Tor Browser's, is reported as working with a note that error pages will be less specific. The command exits 1 if any Tor fails.
+
+Personal mode also does a quick check when it starts, and prints a warning if nothing is listening on a Tor port. It still starts, because Tor may be started a moment later, but pages cannot load until it is.
+
 ### Using Tor Browser's Tor
 
 If Tor Browser is running, its Tor listens on port 9150. `onionglass --tor-port 9150` works with it. Tor Browser does not turn on Tor's detailed failure reasons, so error pages will be less specific.
@@ -334,7 +355,7 @@ To rotate the sign-in key, make a new pair, add its public key under `[tickets]`
 
 | What you see | Likely cause |
 |---|---|
-| "Tor is not available" | Tor is not running, or the port is wrong. Check `--tor-port`. |
+| "Tor is not available" | Tor is not running, or the port is wrong. Run `onionglass check-tor`, which says which, and use `--tor-port` for another port. |
 | "Site not found" | The onion site is offline or the address is wrong. |
 | "Could not reach the site" | The site is busy. Try again in a minute. |
 | "The page could not be shown safely" | The page was too large or complex to make safe. |

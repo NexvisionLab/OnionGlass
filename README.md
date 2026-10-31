@@ -53,6 +53,7 @@ In personal mode there is no proxy and no TLS: the gateway listens on `127.0.0.1
 | Reader view | A toolbar button that shows a page as plain readable text, with no pictures, forms or styles. |
 | Translation | A toolbar button that translates the page text through a service you run, such as a self-hosted LibreTranslate. Only the words are sent. |
 | Entity panel | Lists the wallets (Bitcoin, Ethereum, Monero), email addresses and onion addresses a page names, each checked against its own checksum. Optionally sends them on to a case system when the visitor presses a button. |
+| Censorship | Cover mode (a stranger sees a plain page), a separate domain and gateway for each group of users, and a check of where a domain is blocked. It makes blocking slower and narrower and cannot prevent it. See [docs/censorship.md](docs/censorship.md). |
 | Safety | Blocklist, allowlist, rated list (unrated sites are shown as text only), kill file, page-title name gate with a held list, look-alike warning for copycat addresses, visitor reports with a review queue. |
 | Accounts | Signed one-time sign-in links (Ed25519) that name a profile, a group and a subject. Per-session profiles with request limits and daily allowances. |
 | Operations | Audit log with a choice of how sites are named in it, Prometheus metrics, operator commands for stopping, holding and reading reports, a public abuse page, a config checker. |
@@ -228,6 +229,7 @@ The sections:
 | `[profile]`, `[profiles.NAME]` | What a visitor may do. A ticket names its profile, and an unknown name is refused. |
 | `[policy]` | Blocklist, allowlist and rated list. |
 | `[kill]`, `[held]`, `[names]`, `[known_sites]`, `[reports]` | The stop file, held sites, the name gate, the look-alike list and the report queue. |
+| `[cover]`, `[entries.NAME]` | Cover mode, and a separate domain, port and audience for each group of users. |
 | `[audit]`, `[quota]`, `[metrics]`, `[abuse]` | The audit log, the allowance journal, the metrics token, and the abuse contact. |
 | `[translate]` | The translation service: its address, the target language, an optional key file and a time limit. Needs an audit log, because every page sent is recorded. |
 | `[hooks]` | A signed HTTP service that takes over policy, audit, quota or entity sending. |
@@ -318,6 +320,7 @@ The properties, the threats against them and the tests that prove each one are l
 | `quota`, `audit`, `reports`, `metrics` | Allowances, the audit log, visitor reports, Prometheus metrics. |
 | `tickets`, `hooks` | Sign-in tickets and key rings, the signed HTTP hooks. |
 | `entities` | Wallet, email and onion address extraction with checksums, and the entity batch. |
+| `cover`, `entries`, `reach` | Cover mode, the entry domains for each group of users, and the check of where a domain is blocked. |
 | `translate`, `httpexchange` | The translation client, and the HTTP exchange it shares with the hooks. |
 | `settings`, `config`, `cli`, `teamcli`, `admin` | Profiles and settings, the config loader, the commands. |
 | `pages`, `store`, `files` | The gateway's own pages, the session store, safe file appends. |
@@ -383,6 +386,7 @@ Onion sites can host illegal and harmful material. The project includes blocklis
 - [Integration API](docs/integration-api.md): the signed hooks and the ticket format.
 - [Operator responsibilities](docs/operator-responsibilities.md)
 - [Abuse procedure](docs/abuse-procedure.md)
+- [Censorship](docs/censorship.md): what a gateway can and cannot do where the internet is blocked, and how to run one there.
 
 ## Security
 

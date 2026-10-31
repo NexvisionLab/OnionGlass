@@ -28,6 +28,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from onionglass.audit import ADDRESS_FORMS, AuditSink, JsonLinesAudit
+from onionglass.cover import Cover, load_cover
+from onionglass.entries import apply_entry, entries_in
 from onionglass.held import HeldList
 from onionglass.hooks import HookClient, HttpAudit, HttpEntitySink, HttpPolicy, HttpQuota
 from onionglass.killswitch import KillSwitch
@@ -45,7 +47,7 @@ SECTIONS = frozenset(
     {
         "server", "tor", "tickets", "limits", "profile", "profiles", "policy", "kill", "audit",
         "held", "names", "reports", "metrics", "quota", "hooks", "abuse", "known_sites",
-        "translate",
+        "translate", "cover", "entries",
     }
 )  # fmt: skip
 PROFILE_FIELDS = frozenset(f.name for f in fields(Profile))
@@ -530,6 +532,20 @@ def _translator(reader: _Reader) -> dict[str, Any]:
     return {"translator": translator, "translate_timeout": timeout}
 
 
+def _cover(reader: _Reader) -> dict[str, Any]:
+    """Cover mode, when the file turns it on: strangers see a plain page and nothing else."""
+    table = reader.table("cover", {"enabled", "page_file"})
+    if not table or not _get(table, "enabled", bool, "[cover]"):
+        return {}
+    file = _get(table, "page_file", str, "[cover]")
+    if file is not None and not file:
+        raise ConfigError("[cover].page_file cannot be empty")
+    try:
+        return {"cover": load_cover(reader.path(file)) if file else Cover()}
+    except ValueError as exc:
+        raise ConfigError(f"[cover]: {exc}") from exc
+
+
 def _abuse_contact(reader: _Reader) -> str | None:
     table = reader.table("abuse", {"contact"})
     if not table:
@@ -586,11 +602,21 @@ def _safety_files(reader: _Reader) -> dict[str, Any]:
     return found
 
 
-def parse_config(data: Mapping[str, Any], base: Path) -> TeamConfig:
-    """Turn parsed TOML into settings. ``base`` is the folder relative paths hang from."""
+def parse_config(data: Mapping[str, Any], base: Path, entry: str | None = None) -> TeamConfig:
+    """Turn parsed TOML into settings. ``base`` is the folder relative paths hang from.
+
+    With ``entry``, that entry's domain, ports, audience and state folder are laid over the
+    settings, so the result is the gateway for that one group. The entries are checked either way.
+    """
     unknown = sorted(set(data) - SECTIONS)
     if unknown:
         raise ConfigError(f"unknown section [{unknown[0]}]")
+    try:
+        entries_in(data)
+        if entry is not None:
+            data = apply_entry(data, entry)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     reader = _Reader(data, base)
     domain, scheme, listen, port, public_port = _server(reader)
     tor = _tor(reader)
@@ -599,7 +625,11 @@ def parse_config(data: Mapping[str, Any], base: Path) -> TeamConfig:
         raise ConfigError("[tickets].keys is required: the public keys that sign visitors in")
     limits = _limits(reader)
     default_profile, profiles = _profiles(reader)
-    services = {**_services(reader, limits["hook_timeout"]), **_translator(reader)}
+    services = {
+        **_services(reader, limits["hook_timeout"]),
+        **_translator(reader),
+        **_cover(reader),
+    }
     files = _safety_files(reader)
     try:
         settings = Settings(
@@ -620,7 +650,7 @@ def parse_config(data: Mapping[str, Any], base: Path) -> TeamConfig:
     return TeamConfig(settings=settings, tor=tor, listen=listen, port=port)
 
 
-def load_config(path: str | Path) -> TeamConfig:
+def load_config(path: str | Path, entry: str | None = None) -> TeamConfig:
     """Read a config file. Raises ``ConfigError`` for anything wrong with it."""
     config_path = Path(path)
     try:
@@ -632,6 +662,6 @@ def load_config(path: str | Path) -> TeamConfig:
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise ConfigError(f"{config_path.name} is not valid TOML: {exc}") from exc
     try:
-        return parse_config(data, config_path.resolve().parent)
+        return parse_config(data, config_path.resolve().parent, entry)
     except PolicyConfigError as exc:
         raise ConfigError(str(exc)) from exc

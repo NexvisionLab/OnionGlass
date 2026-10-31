@@ -133,6 +133,21 @@ Open the link in a browser. You should land on the entry page signed in, be able
 
 **Rotating the sign-in key.** Make a new pair, add its public key to `[tickets]` beside the old one, switch your sign-in service to the new private key, wait for the old links to expire (five minutes at most), then remove the old public key and restart.
 
+## If your visitors are in a country that blocks the internet
+
+Read [censorship.md](censorship.md) first. It says what a gateway can and cannot do there, and it starts with the fact that nothing is unblockable. What the bundle gives you:
+
+- **Cover mode** (`[cover] enabled = true`), so that the domain shows a stranger a plain page.
+- **A domain for each group** (`onionglass domains add`), each its own gateway service. `compose.yaml` has a commented example, and `onionglass domains caddy` prints the proxy block for every domain. Each domain needs its own DNS records and wildcard certificate, and the DNS token must cover every zone.
+- **`onionglass domains check`** to see where a domain fails, from the server and from a trusted machine inside the country.
+
+Points about the proxy:
+
+- **HTTP/3 (QUIC).** The Great Firewall reads the server name inside QUIC and blocks by it, so a domain blocked over HTTPS is blocked over HTTP/3 as well. Leaving HTTP/3 on does no harm, but it is not a defence.
+- **Encrypted Client Hello** hides the server name in the TLS hello, but a client needs the encrypted DNS lookup that carries its key, and China and Iran block those lookups. In those countries it usually cannot start. Turn it on if your proxy supports it and you want it for visitors elsewhere, but do not count on it. I have not checked which version of Caddy in this bundle can serve it.
+- **A content network in front of the gateway** gives a censor shared addresses to worry about, which helps. But the network then sees every page a visitor reads, which breaks the promise that only you do. The bundle does not do it, and I do not recommend it.
+- **Certificates are public.** Each new domain's certificate appears in certificate transparency logs, so assume a new domain can be found by anyone watching them.
+
 ## What this does not give you
 
 - **Anonymity from you.** You, and anyone who breaks into the server, can see every address visitors open. The entry page says so. Do not describe the service as anonymous.

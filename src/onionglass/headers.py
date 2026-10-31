@@ -170,6 +170,29 @@ def viewer_headers(policy: HeaderPolicy) -> dict[str, str]:
     }
 
 
+def cover_headers(policy: HeaderPolicy) -> dict[str, str]:
+    """Headers for the plain pages a stranger is shown in cover mode.
+
+    The pages may carry their own styles and small inline pictures, and can load or run nothing
+    else. Every cover answer, whatever its status, has the same headers.
+    """
+    csp = "; ".join(
+        (
+            "default-src 'none'",
+            "style-src 'unsafe-inline'",
+            "img-src data:",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+        )
+    )
+    return {
+        **_common(policy),
+        "Content-Security-Policy": csp,
+        "Content-Type": "text/html; charset=utf-8",
+    }
+
+
 def resource_headers(policy: HeaderPolicy, content_type: str) -> dict[str, str]:
     """Headers for anything that is not a page: stylesheets, images, fonts and files.
 

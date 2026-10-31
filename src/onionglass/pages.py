@@ -243,6 +243,9 @@ def landing_page(
         f'<p class="notice">{html.escape(OPERATOR_NOTICE)}</p>{problem}{form}'
         "<p>Pages are shown without scripts. Images are not loaded unless the operator allows "
         "them.</p>"
+        "<p>The operator of this gateway can see every address you open and every page you read. "
+        "It does not make you anonymous. Where the internet is censored, Tor Browser with a "
+        "bridge is the safer choice.</p>"
     )
     if abuse_link:
         body += '<p><a href="/abuse">Report a site or send a complaint</a></p>'

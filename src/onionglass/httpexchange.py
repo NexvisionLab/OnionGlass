@@ -39,14 +39,14 @@ async def post(  # noqa: PLR0913 - a call needs where it goes, how it is sent an
         writer.write(connection.send(h11.Data(data=body)))
         writer.write(connection.send(h11.EndOfMessage()))
         await writer.drain()
-        return await _read_reply(reader, connection, max_reply)
+        return await read_reply(reader, connection, max_reply)
     finally:
         writer.close()
         with contextlib.suppress(TimeoutError, OSError, ssl.SSLError):
             await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
 
 
-async def _read_reply(
+async def read_reply(
     reader: asyncio.StreamReader, connection: h11.Connection, max_reply: int
 ) -> tuple[int, dict[str, str], bytes]:
     status = 0

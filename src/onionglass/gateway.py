@@ -43,6 +43,7 @@ from onionglass.headers import (
     ACCEPT_ANY,
     ACCEPT_HTML,
     apex_headers,
+    cover_headers,
     document_headers,
     multipart_boundary,
     normalise_multipart,
@@ -237,9 +238,13 @@ class Gateway:
         self._translating = 0
         self._requests: dict[str, deque[float]] = {}
         self.metrics = Metrics(pages.ERRORS)
-        self.app = Starlette(
-            routes=[Route("/{path:path}", self._handle, methods=["GET", "HEAD", "POST"])]
-        )
+        # The framework answers a method that is not listed with its own "405 Method Not Allowed",
+        # which would show a stranger that this is not an ordinary site. In cover mode every
+        # method reaches the gateway, which answers a stranger as a missing page.
+        methods = ["GET", "HEAD", "POST"]
+        if settings.cover is not None:
+            methods += ["PUT", "DELETE", "PATCH", "OPTIONS"]
+        self.app = Starlette(routes=[Route("/{path:path}", self._handle, methods=methods)])
 
     # --- helpers ---------------------------------------------------------------------------
 
@@ -586,21 +591,70 @@ class Gateway:
         host = request.headers.get("host", "")
         try:
             if len(request.headers.getlist("host")) > 1:
+                if self.settings.cover is not None:
+                    return self._cover_missing()
                 return self._error("bad_request")  # two Host headers: some servers read the other
             hosts = self.settings.hosts
+            cover = self.settings.cover
             if hosts.is_apex(host):
+                if cover is not None:
+                    return await self._covered_apex(request)
                 return await self._handle_apex(request)
             label = hosts.label_from_host(host)
+            if cover is not None and (
+                label is None or await self._current_session(request) is None
+            ):
+                return self._cover_missing()
             if label is not None:
                 return await self._handle_label(request, label)
             return self._error("not_found")
         except StoreFullError:
             # The shared store is full. That is a reason to ask people to wait, not a fault.
             self.metrics.inc("refusals_total", reason="other")
+            if self._hide_errors(request):
+                return self._cover_missing()
             return self._error("busy", apex=self.settings.hosts.is_apex(host))
         except Exception as exc:  # unexpected trouble must end in an error page, never a crash
             _log.warning("unexpected failure: %s", type(exc).__name__)
+            if self._hide_errors(request):
+                return self._cover_missing()
             return self._error("internal")
+
+    # --- cover mode ------------------------------------------------------------------------
+
+    def _hide_errors(self, request: Request) -> bool:
+        """In cover mode, a request that carries no session cookie is never shown the gateway's own
+        error page, so provoking an error cannot show a stranger what this is."""
+        return self.settings.cover is not None and not request.cookies.get(
+            self.settings.cookie_name
+        )
+
+    def _cover_missing(self) -> Response:
+        """The answer a plain web server gives for a page that is not there."""
+        cover = self.settings.cover
+        page = cover.not_found if cover is not None else b""
+        return Response(page, 404, cover_headers(self.settings.header_policy))
+
+    async def _covered_apex(self, request: Request) -> Response:
+        """The gateway's own domain in cover mode. A visitor who is not signed in sees a plain
+        front page and nothing else, except that a valid sign-in link still works, a supervisor
+        on this machine can ask for the health check, and a scraper with the token its metrics."""
+        cover = self.settings.cover
+        if cover is None or await self._current_session(request) is not None:
+            return await self._handle_apex(request)
+        path, method = request.url.path, request.method
+        reading = method in ("GET", "HEAD")
+        if path == "/" and reading:
+            return Response(cover.page, 200, cover_headers(self.settings.header_policy))
+        if (path == "/enter" and method in ("GET", "POST")) or (
+            path == "/_og/metrics" and method == "GET"
+        ):
+            answer = await self._handle_apex(request)
+            return answer if answer.status_code < 400 else self._cover_missing()
+        local = request.client is not None and request.client.host in ("127.0.0.1", "::1")
+        if path == "/_og/health" and reading and local:
+            return await self._handle_apex(request)
+        return self._cover_missing()
 
     # --- the main domain -------------------------------------------------------------------
 

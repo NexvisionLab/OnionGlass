@@ -191,6 +191,62 @@ timeout = 20                                      # seconds the service has for 
 - **It is a machine translation.** Every translated page says so at the top. Do not rely on one for evidence: keep the original.
 - **Entities are found in the original text**, so the panel is not affected by what a translation says.
 
+### Cover mode
+
+Where the internet is censored, a censor may visit a gateway's domain to see what it is. With cover mode on, a visitor who has not signed in sees an ordinary plain page, and every other address answers as a missing page on a small web server would. Only a valid sign-in link opens the gateway.
+
+```
+[cover]
+enabled = true
+page_file = "lists/cover.html"   # optional: your own front page, one file with its styles inline
+```
+
+- **A stranger sees a plain page at `/`** (a neutral "under construction" page unless you give your own), and a missing page everywhere else: the same status, the same body and the same headers for every address and every method, including the ones a web framework would normally refuse with its own message.
+- **A valid sign-in link still works.** One that is wrong, used already or forged gets the missing page and not a refusal. Looking at the Continue page still needs a valid link.
+- **Hidden from a stranger:** the entry page, the abuse page, the health check, the metrics, the robots file and every session host name. The health check still answers a supervisor on this machine, and the metrics still answer a scraper that has the token. `check-config` warns that the public abuse page is hidden, so publish your abuse contact somewhere else.
+- **Errors give nothing away.** If something fails while a stranger is asking, they get the missing page and not the gateway's own error page.
+- **Your own page** is served under a policy that lets it load nothing and run nothing, apart from its own inline styles and small pictures given as `data:` links. It must be UTF-8 text of up to 200,000 bytes, and a file that cannot be used stops the start.
+- **It does not hide that the domain exists,** who connects to it, or how the server behaves under load. It is one layer, and [censorship.md](censorship.md) says what the others are. It is for gateways that need a sign-in, so it cannot be used in personal mode.
+
+### Entry domains
+
+A censor blocks a domain. If everyone shares one, that is everyone. Give each group of users its own domain, and a block costs one group and tells you which. Each domain runs as its own gateway, with its own port, sign-in audience, sessions and state files, and all of them are described in the one config file:
+
+```
+[entries.alpha]
+domain = "a.example.net"
+port = 8081
+# public_port = 8443      # only if visitors do not use the usual port
+# audience = "group-one"  # the default is the main audience and the entry name
+```
+
+```
+onionglass domains add --config team.toml --name alpha --domain a.example.net
+onionglass domains list --config team.toml
+onionglass serve --config team.toml --entry alpha
+onionglass ticket --config team.toml --entry alpha --key-file ... --key-id ... --subject ... --group ... --profile ...
+onionglass domains caddy --config team.toml          # the proxy blocks for every domain
+onionglass domains retire --config team.toml --name alpha
+```
+
+- **What an entry changes.** Its domain, its port, its sign-in audience (so a link made for one group does not work on another), and a folder of its own for every file the gateway writes: `state/audit.log` becomes `state/alpha/audit.log`. The folder must exist before it starts, and `domains add` makes it. The keys and the lists the gateway only reads are shared.
+- **Nothing links the groups.** Sessions, labels, quotas and logs are separate, because they are separate processes.
+- **Checked as a set.** Every entry is checked when any gateway starts, so a mistake stops them all and not only one: a name that is not lower-case letters, digits and dashes, a domain used twice or the same as the main one, a domain inside another (it would be taken for one of that gateway's session hosts), a port used twice, a missing port.
+- **Retiring.** `domains retire` puts `all` in that entry's kill file, so it stops within a couple of seconds and the others carry on. Then remove its DNS records, its proxy block and its process. A retired entry stays in the file as a record, and its name cannot be used again by accident.
+- **You still arrange** the DNS records, the wildcard certificate for each domain (the proxy blocks use one DNS token, so it must be able to edit every zone) and a service for each entry in the deployment bundle. `deploy/team/compose.yaml` has a commented example.
+- **Why not one gateway for many domains.** The domain is built into the security headers, the host parsing, the rewritten links and the cookies. Changing all of that would put the most sensitive code at risk to save starting a few more processes.
+
+### Checking that a domain is reachable
+
+```
+onionglass domains check --config team.toml
+onionglass domains check --domain a.example.net --expect-address 203.0.113.7
+```
+
+For each domain it says where a connection stops: the name lookup (`dns_failed`, or `dns_unexpected` if the answer is not an address you expect, as with DNS poisoning, or `wildcard_dns_failed` if a session host name does not resolve), the connection (`tcp_failed`: a timeout suggests dropped packets, a reset or refusal suggests a block or nothing listening), the TLS handshake (`tls_failed`: a reset right after the hello suggests blocking by server name, silence suggests dropped packets, and a certificate that does not match suggests interception), or the page (`http_failed`, or `content_changed` if you gave the hash of the front page with `--expect-sha256` and a different page came back). It exits 1 if any domain fails.
+
+It asks for the front page once, as a browser would, and sends no cookie, account or identifier, follows no redirect and reads at most a megabyte. Run it from a trusted machine inside the country to see what the censor does, and from outside for a baseline. Connecting to the domain is itself a risk to whoever runs it in a country that watches for it.
+
 ### Look-alike warning
 
 Copycat onion sites are made by searching for an address that starts like a popular one: a few characters are cheap to match, and the end of an address is a checksum that cannot be chosen. With `--known-sites FILE` (or `[known_sites]` in the config file), you list the sites people are likely to mean, one per line, the address and then a name:

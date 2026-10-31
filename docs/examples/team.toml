@@ -111,6 +111,21 @@ token_file = "secrets/metrics.token"
 [quota]
 file = "state/quota.log"         # keeps daily counts across restarts
 
+# Where the internet is censored (docs/censorship.md). With cover mode, a visitor who has not
+# signed in sees a plain page and a missing page everywhere else.
+#
+# [cover]
+# enabled = true
+# page_file = "lists/cover.html"   # optional: your own front page, one file, styles inline
+#
+# A separate gateway for each group of users, each with its own domain, port and audience.
+# 'onionglass domains add' writes these, and 'serve --entry alpha' runs one. Make its folder
+# first: the files it writes go in state/alpha/.
+#
+# [entries.alpha]
+# domain = "a.example.net"
+# port = 8081
+
 # Or serve the policy, the audit log and the quotas from another program. Then leave out the
 # [policy], [audit] and [quota] sections above for whatever the other program takes over.
 #

@@ -27,6 +27,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from onionglass.entries import apply_entry
 from onionglass.files import append_line, tail_is_torn
 from onionglass.held import RELEASE, hold_line, is_held_line, parse_line, release_line
 from onionglass.killswitch import parse_kill_file
@@ -46,8 +47,8 @@ class AdminPaths:
     reports: Path | None
 
 
-def paths_from_config(config: str | Path) -> AdminPaths:
-    """The kill file, held list and report file named by a config file."""
+def paths_from_config(config: str | Path, entry: str | None = None) -> AdminPaths:
+    """The kill file, held list and report file named by a config file, or by one entry in it."""
     path = Path(config)
     try:
         data = tomllib.loads(path.read_bytes().decode("utf-8"))
@@ -55,6 +56,11 @@ def paths_from_config(config: str | Path) -> AdminPaths:
         raise AdminError(f"cannot read {path}: {exc.strerror}") from exc
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise AdminError(f"{path.name} is not valid TOML") from exc
+    if entry is not None:
+        try:
+            data = apply_entry(data, entry)
+        except ValueError as exc:
+            raise AdminError(str(exc)) from exc
     base = path.resolve().parent
 
     def find(section: str) -> Path | None:

@@ -61,6 +61,22 @@ services:
     mem_limit: 1g
     pids_limit: 300
 
+  # One more gateway, for another group of users or a replacement domain (docs/censorship.md).
+  # Add the entry with 'onionglass domains add', uncomment this, and give the proxy its block
+  # ('onionglass domains caddy'). The name after gateway- must be the entry's name.
+  #
+  # gateway-alpha:
+  #   <<: *hardened
+  #   build: ../..
+  #   depends_on: [tor-a, tor-b]
+  #   networks: [private]
+  #   command: ["serve", "--config", "/etc/onionglass/team.toml", "--entry", "alpha"]
+  #   volumes:
+  #     - ./config:/etc/onionglass:ro
+  #     - ./state:/var/lib/onionglass
+  #   mem_limit: 1g
+  #   pids_limit: 300
+
   proxy:
     <<: *hardened
     build: ./proxy

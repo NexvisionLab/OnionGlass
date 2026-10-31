@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
 from onionglass.audit import AuditSink
+from onionglass.cover import Cover
 from onionglass.entities import EntitySink
 from onionglass.headers import HeaderPolicy
 from onionglass.held import HeldList
@@ -154,6 +155,7 @@ class Settings:
     entity_sink: EntitySink | None = None
     max_entity_sends_per_session: int = 20
     translator: Translator | None = None
+    cover: Cover | None = None  # what a visitor who has not signed in sees
     translate_timeout: float = 20.0
     max_concurrent_translations: int = 8
     metrics_token: str | None = None
@@ -204,6 +206,8 @@ class Settings:
         """A profile that needs a service the gateway does not have is an error, not a button
         that does nothing."""
         every = (self.profile, *self.profiles.values())
+        if self.cover is not None and self.open_mode:
+            raise ValueError("cover mode needs a sign-in, so it cannot be used in personal mode")
         if self.audit is None and (self.entity_sink is not None or self.translator is not None):
             raise ValueError(
                 "an entity sink or a translator needs an audit log, because every send "

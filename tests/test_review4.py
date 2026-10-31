@@ -52,6 +52,7 @@ async def call(
     host: str = APEX,
     headers: dict[str, str] | None = None,
     body: bytes = b"",
+    client: tuple[str, int] = ("127.0.0.1", 50000),
 ) -> tuple[int, bytes]:
     """One request straight into the application, so that several can be in flight together."""
     pairs = [(b"host", host.encode("ascii")), (b"content-length", str(len(body)).encode("ascii"))]
@@ -67,7 +68,7 @@ async def call(
         "query_string": b"",
         "headers": pairs,
         "server": ("localhost", PORT),
-        "client": ("127.0.0.1", 50000),
+        "client": client,
     }
     sent = [False]
     status: list[int] = []

@@ -105,7 +105,8 @@ def test_the_current_address_follows_page_loads_in_the_frame() -> None:
     env = Env(lambda _r: reply("<title>My site</title><p>hello</p>"))
     path = viewer_path(env)
     label = label_of(path)
-    assert env.client.get("/_og/current").json() == {"reader": False}  # no page yet
+    no_page = {"reader": False, "translate": False}
+    assert env.client.get("/_og/current").json() == no_page  # no page yet
     env.get(label, "/dir/page?x=1", headers={"sec-fetch-dest": "iframe"})
     record = env.client.get("/_og/current").json()
     assert record["url"] == f"http://{TOR_PROJECT}.onion/dir/page?x=1"
@@ -237,9 +238,10 @@ def test_the_script_only_displays_text_and_only_talks_to_the_gateway() -> None:
     ):
         assert dangerous not in VIEWER_SCRIPT, dangerous
     assert "textContent" in VIEWER_SCRIPT
-    # The script talks to four paths on the gateway itself, and nothing else.
-    assert VIEWER_SCRIPT.count("fetch(") == 4
-    for path in ("/_og/current", "/_og/report", "/_og/reader", "/_og/send-entities"):
+    # The script talks to five paths on the gateway itself, and nothing else.
+    assert VIEWER_SCRIPT.count("fetch(") == 5
+    paths = ("/_og/current", "/_og/report", "/_og/reader", "/_og/send-entities", "/_og/translate")
+    for path in paths:
         assert f'fetch("{path}"' in VIEWER_SCRIPT
     assert "http://" not in VIEWER_SCRIPT and "https://" not in VIEWER_SCRIPT
 

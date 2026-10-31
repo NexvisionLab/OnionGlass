@@ -171,6 +171,26 @@ Every visitor has a "Reader view" button in the viewer's toolbar. It shows pages
 - **Per visitor, per session.** The choice covers every site that visitor opens until they switch it off or the session ends. Another visitor's view is not changed.
 - **Same rules otherwise.** The page is fetched, counted, audited and checked against the policy exactly as in the normal view, and goes through the same safety pass with a shorter list of allowed tags. Cost, quota and the entity panel behave as before.
 
+### Translation
+
+A profile with `allow_translate = true` gets a "Translate" button in the viewer's toolbar, when the config file has a `[translate]` section. Pressing it shows every page the visitor opens in the reader view, with its text translated into the language the operator chose. "Original language" turns it back. It is off by default and off in the restricted preset.
+
+```
+[translate]
+url = "https://translate.internal.example.net"   # a LibreTranslate-compatible service
+target = "en"                                     # the language pages are translated into
+api_key_file = "secrets/translate.key"            # only if the service needs a key
+timeout = 20                                      # seconds the service has for one page
+```
+
+- **The service is yours.** Page text goes to it, so run it yourself, for example a self-hosted LibreTranslate, and not a service you do not control. The address must be https, unless it is on this machine or `allow_plain_http = true`. The gateway needs a route to it, as for any hook.
+- **Only the words go.** The service is sent the visible text of the page and the target language. It is never sent the onion address, the page title, links, the account, the session or anything about the visitor. Code blocks and text with no letters in it are left out.
+- **Each page is on the audit record first** (kind `translate`, with the number of characters as the rule). If that cannot be written, nothing is sent and the page is shown in its own language.
+- **What comes back is text, never markup.** A translation that contains tags is shown as the characters it is. The page keeps the safety rules of the reader view.
+- **Translation never stops a page.** If the service is down, slow, answers with the wrong number of texts, or is refused, the visitor gets the original text and a note saying translation was not available. A page with more than 1,000 pieces of text, or more than 100,000 characters, is translated up to that point and says so.
+- **It is a machine translation.** Every translated page says so at the top. Do not rely on one for evidence: keep the original.
+- **Entities are found in the original text**, so the panel is not affected by what a translation says.
+
 ### Look-alike warning
 
 Copycat onion sites are made by searching for an address that starts like a popular one: a few characters are cheap to match, and the end of an address is a checksum that cannot be chosen. With `--known-sites FILE` (or `[known_sites]` in the config file), you list the sites people are likely to mean, one per line, the address and then a name:

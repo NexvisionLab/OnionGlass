@@ -40,7 +40,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import contextlib
 import hashlib
 import json
 import secrets
@@ -55,6 +54,7 @@ import h11
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from onionglass import httpexchange as exchange
 from onionglass.audit import ADDRESS_FORMS, AddressForm, AuditEvent, in_address_form
 from onionglass.entities import EntityBatch, SinkError
 from onionglass.policy import Decision, PolicyRequest
@@ -212,55 +212,18 @@ class HookClient:
         self, path: str, headers: list[tuple[bytes, bytes]], body: bytes
     ) -> tuple[int, dict[str, str], bytes]:
         target = self._target
-        reader, writer = await asyncio.open_connection(
-            target.host,
-            target.port,
-            ssl=self._tls,
-            server_hostname=target.host if self._tls is not None else None,
-        )
         try:
-            connection = h11.Connection(h11.CLIENT, max_incomplete_event_size=16_384)
-            writer.write(connection.send(h11.Request(method="POST", target=path, headers=headers)))
-            writer.write(connection.send(h11.Data(data=body)))
-            writer.write(connection.send(h11.EndOfMessage()))
-            await writer.drain()
-            return await self._read_reply(reader, connection)
-        finally:
-            writer.close()
-            with contextlib.suppress(TimeoutError, OSError, ssl.SSLError):
-                await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
-
-    @staticmethod
-    async def _read_reply(
-        reader: asyncio.StreamReader, connection: h11.Connection
-    ) -> tuple[int, dict[str, str], bytes]:
-        status = 0
-        reply_headers: dict[str, str] = {}
-        received = bytearray()
-        while True:
-            event = connection.next_event()
-            if event is h11.NEED_DATA:
-                chunk = await reader.read(65_536)
-                connection.receive_data(chunk)
-                if not chunk and connection.their_state not in (h11.DONE, h11.CLOSED):
-                    # receive_data(b"") told h11 the peer closed; the next event reports it
-                    continue
-            elif isinstance(event, h11.InformationalResponse):
-                continue
-            elif isinstance(event, h11.Response):
-                status = event.status_code
-                reply_headers = {
-                    name.decode("latin-1").lower(): value.decode("latin-1")
-                    for name, value in event.headers
-                }
-            elif isinstance(event, h11.Data):
-                received += event.data
-                if len(received) > MAX_RESPONSE_BYTES:
-                    raise HookError("the hook's reply is too large")
-            elif isinstance(event, h11.EndOfMessage):
-                return status, reply_headers, bytes(received)
-            else:
-                raise HookError("the hook's reply ended unexpectedly")
+            return await exchange.post(
+                target.host,
+                target.port,
+                self._tls,
+                path,
+                headers=headers,
+                body=body,
+                max_reply=MAX_RESPONSE_BYTES,
+            )
+        except exchange.ExchangeError as exc:
+            raise HookError(f"the hook's {exc}") from exc
 
     def _verify(
         self, nonce: str, status: int, headers: dict[str, str], body: bytes

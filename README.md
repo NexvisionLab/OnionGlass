@@ -51,6 +51,7 @@ In personal mode there is no proxy and no TLS: the gateway listens on `127.0.0.1
 |---|---|
 | Viewing | Onion sites in an ordinary browser, with the real address shown above the page. Images and fonts are withheld unless a profile allows them, and links to the normal internet go through a warning page. |
 | Reader view | A toolbar button that shows a page as plain readable text, with no pictures, forms or styles. |
+| Translation | A toolbar button that translates the page text through a service you run, such as a self-hosted LibreTranslate. Only the words are sent. |
 | Entity panel | Lists the wallets (Bitcoin, Ethereum, Monero), email addresses and onion addresses a page names, each checked against its own checksum. Optionally sends them on to a case system when the visitor presses a button. |
 | Safety | Blocklist, allowlist, rated list (unrated sites are shown as text only), kill file, page-title name gate with a held list, look-alike warning for copycat addresses, visitor reports with a review queue. |
 | Accounts | Signed one-time sign-in links (Ed25519) that name a profile, a group and a subject. Per-session profiles with request limits and daily allowances. |
@@ -154,7 +155,7 @@ Personal mode is for one person on their own machine. The gateway listens on `12
 onionglass
 ```
 
-Open `http://localhost:8080/` in your browser, type an onion address, and press Open. The page appears in a frame, with its real address above it and a toolbar for copying the address, reloading, switching to the reader view and reporting the site.
+Open `http://localhost:8080/` in your browser, type an onion address, and press Open. The page appears in a frame, with its real address above it and a toolbar for copying the address, reloading, switching to the reader view, translating and reporting the site.
 
 Every option is off unless you give it:
 
@@ -228,6 +229,7 @@ The sections:
 | `[policy]` | Blocklist, allowlist and rated list. |
 | `[kill]`, `[held]`, `[names]`, `[known_sites]`, `[reports]` | The stop file, held sites, the name gate, the look-alike list and the report queue. |
 | `[audit]`, `[quota]`, `[metrics]`, `[abuse]` | The audit log, the allowance journal, the metrics token, and the abuse contact. |
+| `[translate]` | The translation service: its address, the target language, an optional key file and a time limit. |
 | `[hooks]` | A signed HTTP service that takes over policy, audit, quota or entity sending. |
 
 A profile has these settings. The defaults are the cautious ones:
@@ -241,6 +243,7 @@ A profile has these settings. The defaults are the cautious ones:
 | `max_requests_per_minute` | none | A limit per session. Typing in an address counts. |
 | `daily_quota`, `open_cost`, `page_cost` | none, 1, 0 | A daily allowance per account, counted in opens or pages or any mix. |
 | `show_entities`, `send_entities` | `false`, `false` | The entity panel, and the button that sends its list to the case system. |
+| `allow_translate` | `false` | The Translate button. Needs a `[translate]` section. |
 
 `preset = "restricted"` gives a ready-made text-only profile with no forms, logins, uploads, images or fonts and 60 requests a minute.
 
@@ -275,6 +278,7 @@ An integration is a separate service the gateway calls over HTTP. Outside code i
 | Audit | Receives every audit event. | The request is refused. |
 | Quota | Checks and takes allowance. | The request is refused in a profile that has an allowance. |
 | Entity sink | Receives the entities on a page when a visitor presses a button. | The visitor is told it could not be sent. |
+| Translation | Translates the text of a page when a visitor asks. A LibreTranslate-compatible service, not signed. | The page is shown in its own language, with a note. |
 
 Requests carry an Ed25519 signature, a key id, a timestamp and a one-time nonce, and replies must be signed too, with the request's nonce inside the signature so a recorded "allow" cannot be played back. Everything is optional, and each hook has a built-in version, so the gateway works with no integration at all. The formats are in [docs/integration-api.md](docs/integration-api.md).
 
@@ -314,6 +318,7 @@ The properties, the threats against them and the tests that prove each one are l
 | `quota`, `audit`, `reports`, `metrics` | Allowances, the audit log, visitor reports, Prometheus metrics. |
 | `tickets`, `hooks` | Sign-in tickets and key rings, the signed HTTP hooks. |
 | `entities` | Wallet, email and onion address extraction with checksums, and the entity batch. |
+| `translate`, `httpexchange` | The translation client, and the HTTP exchange it shares with the hooks. |
 | `settings`, `config`, `cli`, `teamcli`, `admin` | Profiles and settings, the config loader, the commands. |
 | `pages`, `store`, `files` | The gateway's own pages, the session store, safe file appends. |
 

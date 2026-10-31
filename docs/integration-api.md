@@ -23,7 +23,7 @@ Status: draft, no stable version. The shapes below will change before version 1.
 | Intel | Gateway calls out | Data for the panel beside a page | What this instance itself knows | Panel shows local data only |
 | Entity sink | Gateway calls out | The entities on the page a visitor is looking at, when they press a button | Off | The visitor is told it could not be sent |
 | Entity extraction | Gateway calls out | Wallets, emails, handles and keys found in a page | Built-in pattern matching | Built-in extraction only |
-| Translation | Gateway calls out | Translate page text | Any LibreTranslate-compatible URL | Translation unavailable |
+| Translation | Gateway calls out | Translate page text | Off. Any LibreTranslate-compatible URL | The page is shown in its own language, with a note |
 | Discovery event | Gateway calls out | An unknown onion was opened | Off | Event is dropped |
 | Watch event | Gateway calls out | A visitor asked to watch an onion | Off | Event is dropped |
 
@@ -72,6 +72,16 @@ Every request body has `"v": 1`. Fields you do not know must be ignored, so that
 **`/quota/used`** receives `subject` and `profile` and replies `{"used": <whole number>}`. **`/quota/charge`** receives `subject`, `profile` and `units`, adds them to today's count, and replies with the new total in the same form. **`/quota/reserve`** receives `subject`, `profile`, `units` and `limit`. It must, as one step that no other request can come between, check that today's count plus `units` is not over `limit`, and if so add `units` and reply `{"ok": true, "used": <new total>}`, otherwise change nothing and reply `{"ok": false}`. The gateway uses it for opens, so that requests arriving together cannot overspend an allowance.
 
 **`/entities`** receives `{"batch": {...}}` with `subject`, `group`, `profile`, `origin`, `path`, `entities` and `time`. `entities` is a list of `{"kind": ..., "value": ...}` where kind is `bitcoin`, `ethereum`, `monero`, `email` or `onion`, each already checked by the gateway. `time` is whole seconds since the epoch. The site is named in the audit form the operator chose, as for `/audit`. The page's own text and title are never sent. A batch is sent only when a visitor presses the button, it holds only what the gateway itself found on the page they are looking at, and the send is on the audit record first (`kind` `entities`, `action` `send`, `rule` the number of entities). Reply `{"ok": true}`. Anything else tells the visitor it could not be sent, and does not use up their allowance (`max_entity_sends_per_session`, 20 by default, counted per session and cleared after 24 hours without a send). To turn it on, add `"entities"` to `[hooks].use` and set `send_entities = true` on the profiles that may use it. That setting needs `show_entities` too, because a visitor sends what the panel shows.
+
+### The translation service
+
+Translation uses a different, simpler format, so that an existing LibreTranslate server works as it is. It is not signed. The gateway sends `POST <base>/translate` with this JSON body, and nothing else about the visitor or the page:
+
+```json
+{"q": ["first text", "second text"], "source": "auto", "target": "en", "format": "text", "api_key": "..."}
+```
+
+`api_key` is only present if the operator set one. The service answers `200` with `{"translatedText": ["...", "..."]}`, one string for each text sent, in the same order. Anything else is a failure: a different status, a redirect (not followed), a list of another length, a value that is not a string, a string more than 20 times as long as its text plus 1,000 characters, or a reply of more than 2 MB. A failure never stops a page. The visitor sees the original text and a note. Many texts are sent in several calls of at most 100 texts and 20,000 characters each, and the whole page has one time limit (`[translate].timeout`). What comes back is always written into the page as text and never as markup. The address must be https unless it is on this machine or the operator allows plain http, and it cannot carry a name, a password or a query.
 
 ### Keeping answers
 

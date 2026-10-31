@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import codecs
 import html as html_lib
+import re
+import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
@@ -177,6 +180,17 @@ _READER_DROP = frozenset(
 )  # fmt: skip
 _READER_ATTRIBUTES: dict[str, set[str]] = {"a": {"href", "rel"}}
 READER_NOTICE = "Reader view. Pictures, forms, styles and page furniture are left out."
+TRANSLATED_NOTICE = "Machine translation. Check anything that matters against the original."
+NOT_TRANSLATED_NOTICE = (
+    "Translation was not available, so this page is shown in its original language."
+)
+PARTLY_TRANSLATED_NOTICE = (
+    "Part of this page was too long to translate and is shown in its original language."
+)
+MAX_TRANSLATION_SLOTS = 1000
+MAX_TRANSLATED_TEXT = 5000
+MAX_TRANSLATED_TOTAL = 100_000
+_NO_TRANSLATE = frozenset({"pre", "code", "kbd", "samp", "textarea", "script", "style"})
 _READER_STYLE = (
     "body{max-width:42rem;margin:1.5rem auto;padding:0 1rem;font:1.1rem/1.6 Georgia,serif;"
     "color:#1b1b1b;background:#fff}"
@@ -223,6 +237,7 @@ class HtmlOptions:
     max_tags: int = 30_000
     max_output_bytes: int = 12_000_000
     reader: bool = False  # keep only the text and its structure, for reading
+    translate_slots: bool = False  # reader view only: leave a slot where each piece of text is
 
     @property
     def css(self) -> CssOptions:
@@ -241,6 +256,9 @@ class RewriteResult:
     refresh_url: str | None
     headings: tuple[str, ...] = ()
     text: str = ""  # the text shown on the page, for finding entities in
+    slots: tuple[str, ...] = ()  # the pieces of text to translate, in order
+    slot_token: str = ""  # what marks a slot in ``body``, different for every page
+    slots_cut: bool = False  # some text was too much or too long to be translated
 
 
 def decode_document(data: bytes, declared_charset: str | None = None) -> str:
@@ -297,6 +315,11 @@ class _Emitter:
         self.blocked_forms = 0
         self.refresh_url: str | None = None
         self._nodes = 0
+        self.slots: list[str] = []
+        self.slots_cut = False
+        self._slot_chars = 0
+        wants_slots = options.reader and options.translate_slots
+        self.slot_token = f"ogt{secrets.token_hex(8)}x" if wants_slots else ""
 
     # --- helpers ----------------------------------------------------------------------------
 
@@ -305,6 +328,29 @@ class _Emitter:
         if resolved.kind == "external":
             self.external_links += 1
         return resolved
+
+    def _text_out(self, text: str, stack: list[tuple[LexborNode, str]]) -> str:
+        """The text as it goes into the page. When the page is to be translated, the words are
+        taken out and a slot is left in their place, with the spacing around them kept."""
+        escaped = html_lib.escape(text, quote=False)
+        if not self.slot_token or any((node.tag or "") in _NO_TRANSLATE for node, _ in stack):
+            return escaped
+        core = text.strip()
+        if not core or not any(char.isalpha() for char in core):
+            return escaped
+        if (
+            len(core) > MAX_TRANSLATED_TEXT
+            or len(self.slots) >= MAX_TRANSLATION_SLOTS
+            or self._slot_chars + len(core) > MAX_TRANSLATED_TOTAL
+        ):
+            self.slots_cut = True
+            return escaped
+        lead = text[: len(text) - len(text.lstrip())]
+        trail = text[len(text.rstrip()) :]
+        self.slots.append(core)
+        self._slot_chars += len(core)
+        shown = f"{self.slot_token}{len(self.slots) - 1}e"
+        return f"{html_lib.escape(lead, quote=False)}{shown}{html_lib.escape(trail, quote=False)}"
 
     def _capture(self, text: str) -> None:
         """Keep the text shown on the page, up to a limit, for finding entities in."""
@@ -619,7 +665,7 @@ class _Emitter:
                 parent = stack[-1][0].tag if stack else ""
                 if parent in ("pre", "textarea") and text.startswith("\n"):
                     text = "\n" + text
-                self.out.append(html_lib.escape(text, quote=False))
+                self.out.append(self._text_out(text, stack))
                 self._capture(text)
                 current = current.next
                 continue
@@ -742,7 +788,40 @@ def _rewrite_html(
         refresh_url=emitter.refresh_url,
         headings=tuple(emitter.headings),
         text="\n".join(emitter.text_parts),
+        slots=tuple(emitter.slots),
+        slot_token=emitter.slot_token,
+        slots_cut=emitter.slots_cut,
     )
+
+
+def fill_slots(document: str, result: RewriteResult, texts: Sequence[str] | None) -> str:
+    """Put text into the slots of a page rewritten with ``translate_slots``.
+
+    ``texts`` is one string for each slot, or None to put the original text back. Every string is
+    written as text, so markup in it is shown and never run. The document is read once, so a
+    string that looks like a slot is not filled in again.
+    """
+    chosen = result.slots if texts is None else texts
+    if len(chosen) != len(result.slots):
+        raise ValueError("there must be one text for each slot")
+    if not result.slot_token:
+        return document
+    pattern = re.compile(re.escape(result.slot_token) + r"(\d+)e")
+
+    def pick(found: re.Match[str]) -> str:
+        index = int(found.group(1))
+        return (
+            html_lib.escape(chosen[index], quote=False) if index < len(chosen) else found.group(0)
+        )
+
+    return pattern.sub(pick, document)
+
+
+def add_notice(document: str, notice: str) -> str:
+    """Add a sentence to the banner at the top of a reader view."""
+    shown = html_lib.escape(READER_NOTICE, quote=False)
+    added = html_lib.escape(notice, quote=False)
+    return document.replace(f"{shown}</div>", f"{shown} {added}</div>", 1)
 
 
 def _effective_base(tree: LexborHTMLParser, base: OnionUrl, mapper: UrlMapper) -> OnionUrl:

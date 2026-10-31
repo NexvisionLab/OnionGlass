@@ -98,6 +98,15 @@ hold_after = 3                   # hold a site once this many different visitors
 [metrics]
 token_file = "secrets/metrics.token"
 
+# Translate pages for the profiles that set allow_translate = true. The service gets the text of
+# pages a visitor reads and nothing else, so run it yourself.
+#
+# [translate]
+# url = "https://translate.internal.example.net"   # a LibreTranslate-compatible service
+# target = "en"
+# api_key_file = "secrets/translate.key"          # only if the service needs a key
+# timeout = 20
+
 [quota]
 file = "state/quota.log"         # keeps daily counts across restarts
 

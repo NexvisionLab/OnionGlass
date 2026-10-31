@@ -187,10 +187,12 @@ def test_the_gateway_built_from_the_example_signs_people_in_and_enforces_it(
 def test_the_example_with_hooks_uncommented_builds_signed_http_hooks(layout: Layout) -> None:
     secret(layout.root / "secrets" / "gateway.private.pem", pem_private(generate_key()))
     (layout.root / "keys" / "service-2026-10.public.pem").write_bytes(pem_public(generate_key()))
-    text = re.sub(
+    whole = layout.text()
+    start = whole.index("# [hooks]")  # other commented sections, such as [translate], stay off
+    text = whole[:start] + re.sub(
         r"^# (\[hooks\]|url|key_id|signing_key_file|response_keys|use|cache_seconds)",
         r"\1",
-        layout.text(),
+        whole[start:],
         flags=re.MULTILINE,
     )
     layout.config.write_text(without_sections(text, "policy", "audit", "quota"), encoding="utf-8")

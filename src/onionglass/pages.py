@@ -331,6 +331,35 @@ VIEWER_SCRIPT = """(function () {
   var entitiesToggle = document.getElementById("entities-toggle");
   var readerToggle = document.getElementById("reader-toggle");
   var readerOn = false;
+  var translateToggle = document.getElementById("translate-toggle");
+  var translateOn = false;
+
+  function showTranslate(on) {
+    if (!translateToggle) { return; }
+    translateOn = on;
+    translateToggle.textContent = on ? "Original language" : "Translate";
+    translateToggle.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  if (translateToggle) {
+    translateToggle.addEventListener("click", function () {
+      translateToggle.disabled = true;
+      fetch("/_og/translate", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "on=" + (translateOn ? "0" : "1")
+      })
+        .then(function (response) { return response.ok ? response.json() : null; })
+        .then(function (data) {
+          if (data && typeof data.translate === "boolean") {
+            showTranslate(data.translate);
+            frame.src = frameUrl;
+          }
+        })
+        .catch(function () {})
+        .then(function () { translateToggle.disabled = false; });
+    });
+  }
 
   function showReader(on) {
     readerOn = on;
@@ -413,6 +442,7 @@ VIEWER_SCRIPT = """(function () {
       .then(function (response) { return response.ok ? response.json() : {}; })
       .then(function (data) {
         if (data && typeof data.reader === "boolean") { showReader(data.reader); }
+        if (data && typeof data.translate === "boolean") { showTranslate(data.translate); }
         if (data && typeof data.url === "string") {
           current = data.url;
           address.textContent = data.url;
@@ -525,9 +555,14 @@ def viewer_page(
     can_report: bool = False,
     can_show_entities: bool = False,
     can_send_entities: bool = False,
+    can_translate: bool = False,
 ) -> bytes:
     """The page that frames an onion site, with the real address shown above it."""
     controls = '<button id="reader-toggle" type="button" aria-pressed="false">Reader view</button>'
+    if can_translate:
+        controls += (
+            '<button id="translate-toggle" type="button" aria-pressed="false">Translate</button>'
+        )
     if can_report:
         controls += _report_controls()
     if can_show_entities:

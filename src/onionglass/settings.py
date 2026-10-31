@@ -19,6 +19,7 @@ from onionglass.policy import Policy
 from onionglass.quota import QuotaMeter
 from onionglass.reports import ReportQueue
 from onionglass.tickets import KeyRing
+from onionglass.translate import Translator
 
 MAX_PROFILE_BYTES = 1_000_000_000
 MAX_CONTACT = 200
@@ -49,6 +50,7 @@ class Profile:
     allow_fonts: bool = True
     show_entities: bool = False  # list the wallets, emails and onion addresses a page names
     send_entities: bool = False  # let the visitor send that list on to the entity sink
+    allow_translate: bool = False  # let the visitor have the page text translated by the service
     allow_post_forms: bool = True
     allow_uploads: bool = False
     allow_password_fields: bool = True
@@ -151,6 +153,8 @@ class Settings:
     max_reports_per_session: int = 10
     entity_sink: EntitySink | None = None
     max_entity_sends_per_session: int = 20
+    translator: Translator | None = None
+    translate_timeout: float = 20.0
     metrics_token: str | None = None
     name_gate: NameGate | None = None
     hook_timeout: float = 2.0
@@ -191,6 +195,19 @@ class Settings:
             raise ValueError("the session lifetime must be above zero and at most 30 days")
         if not 0 < self.hook_timeout <= 60:
             raise ValueError("hook_timeout must be above zero and at most 60 seconds")
+        if not 0 < self.translate_timeout <= 300:
+            raise ValueError("translate_timeout must be above zero and at most 300 seconds")
+
+    def _check_services_match_profiles(self) -> None:
+        """A profile that needs a service the gateway does not have is an error, not a button
+        that does nothing."""
+        every = (self.profile, *self.profiles.values())
+        if self.entity_sink is None and any(p.send_entities for p in every):
+            raise ValueError("a profile sends entities but no entity sink is configured")
+        if self.translator is None and any(p.allow_translate for p in every):
+            raise ValueError("a profile translates pages but no translator is configured")
+        if self.quota is None and any(p.daily_quota is not None for p in every):
+            raise ValueError("a profile has a daily quota but no quota meter is configured")
 
     def __post_init__(self) -> None:
         self._check_limits()
@@ -203,16 +220,9 @@ class Settings:
             or " " in self.metrics_token
         ):
             raise ValueError("the metrics token must be 16 or more printable characters, no spaces")
-        if self.entity_sink is None and any(
-            p.send_entities for p in (self.profile, *self.profiles.values())
-        ):
-            raise ValueError("a profile sends entities but no entity sink is configured")
+        self._check_services_match_profiles()
         if self.name_gate is not None and self.held is None:
             raise ValueError("a name gate needs a held list, or it could only refuse once")
-        if self.quota is None and any(
-            p.daily_quota is not None for p in (self.profile, *self.profiles.values())
-        ):
-            raise ValueError("a profile has a daily quota but no quota meter is configured")
         for key, value in self.profiles.items():
             if key != value.name or key == self.profile.name:
                 raise ValueError("profiles must be named by their own name, and names are unique")

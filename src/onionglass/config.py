@@ -38,12 +38,14 @@ from onionglass.quota import LocalQuota, QuotaError
 from onionglass.reports import ReportError, ReportQueue
 from onionglass.settings import Profile, Settings
 from onionglass.tickets import KeyRing
+from onionglass.translate import LibreTranslate
 from onionglass.upstream import TorConfig
 
 SECTIONS = frozenset(
     {
         "server", "tor", "tickets", "limits", "profile", "profiles", "policy", "kill", "audit",
         "held", "names", "reports", "metrics", "quota", "hooks", "abuse", "known_sites",
+        "translate",
     }
 )  # fmt: skip
 PROFILE_FIELDS = frozenset(f.name for f in fields(Profile))
@@ -54,7 +56,7 @@ PROFILE_KINDS: dict[str, type | tuple[type, ...]] = {
     "allow_uploads": bool, "allow_password_fields": bool, "max_page_bytes": int,
     "max_asset_bytes": int, "rewrite_timeout": (int, float), "max_requests_per_minute": int,
     "daily_quota": int, "open_cost": int, "page_cost": int, "show_entities": bool,
-    "send_entities": bool,
+    "send_entities": bool, "allow_translate": bool,
 }  # fmt: skip
 HOOK_USES = frozenset({"policy", "audit", "quota", "entities"})
 MAX_SECRET_BYTES = 16_384
@@ -498,6 +500,35 @@ def _services(reader: _Reader, hook_timeout: float) -> dict[str, Any]:
     return parts
 
 
+def _translator(reader: _Reader) -> dict[str, Any]:
+    """The translation service, when there is one. It gets the text of pages a visitor reads."""
+    table = reader.table(
+        "translate", {"url", "target", "api_key_file", "timeout", "allow_plain_http"}
+    )
+    if not table:
+        return {}
+    url = _get(table, "url", str, "[translate]")
+    if not url:
+        raise ConfigError("[translate] needs a url")
+    key_file = _get(table, "api_key_file", str, "[translate]")
+    key = None
+    if key_file:
+        raw = _secret_bytes(reader.path(key_file), "[translate].api_key_file")
+        key = raw.decode("utf-8", "replace").strip()
+    timeout = _positive(table, "timeout", "[translate]", 20.0)
+    try:
+        translator = LibreTranslate(
+            url,
+            target=_get_or(table, "target", str, "[translate]", "en"),
+            api_key=key,
+            timeout=timeout,
+            allow_plain_http=bool(_get(table, "allow_plain_http", bool, "[translate]")),
+        )
+    except ValueError as exc:
+        raise ConfigError(f"[translate]: {exc}") from exc
+    return {"translator": translator, "translate_timeout": timeout}
+
+
 def _abuse_contact(reader: _Reader) -> str | None:
     table = reader.table("abuse", {"contact"})
     if not table:
@@ -567,7 +598,7 @@ def parse_config(data: Mapping[str, Any], base: Path) -> TeamConfig:
         raise ConfigError("[tickets].keys is required: the public keys that sign visitors in")
     limits = _limits(reader)
     default_profile, profiles = _profiles(reader)
-    services = _services(reader, limits["hook_timeout"])
+    services = {**_services(reader, limits["hook_timeout"]), **_translator(reader)}
     files = _safety_files(reader)
     try:
         settings = Settings(

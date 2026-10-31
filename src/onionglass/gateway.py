@@ -57,7 +57,18 @@ from onionglass.onion import InvalidOnionError, OnionHost, OnionOrigin, OnionUrl
 from onionglass.policy import Decision, PolicyRequest
 from onionglass.reports import CATEGORIES, ReportError
 from onionglass.rewrite.css import CssError, CssOptions, sanitize_stylesheet, verify_stylesheet
-from onionglass.rewrite.html import HtmlOptions, RewriteError, decode_document, rewrite_html
+from onionglass.rewrite.html import (
+    NOT_TRANSLATED_NOTICE,
+    PARTLY_TRANSLATED_NOTICE,
+    TRANSLATED_NOTICE,
+    HtmlOptions,
+    RewriteError,
+    RewriteResult,
+    add_notice,
+    decode_document,
+    fill_slots,
+    rewrite_html,
+)
 from onionglass.rewrite.urls import resolve_reference
 from onionglass.settings import Profile, Settings
 from onionglass.store import InMemoryStore, SessionStore, StoreFullError
@@ -624,6 +635,8 @@ class Gateway:
             return await self._report(request)
         if path == "/_og/reader":
             return await self._set_reader(request)
+        if path == "/_og/translate":
+            return await self._set_translate(request)
         if path == "/_og/send-entities":
             return await self._send_entities(request)
         return None
@@ -859,6 +872,7 @@ class Gateway:
                 and profile.send_entities
                 and self.settings.entity_sink is not None
             ),
+            can_translate=self._may_translate(profile),
         )
         return Response(page, 200, viewer_headers(self.settings.header_policy))
 
@@ -1017,17 +1031,38 @@ class Gateway:
         noun = "entity" if len(found) == 1 else "entities"
         return self._json(200, f"Sent {len(found)} {noun}.")
 
+    async def _switch_on(self, name: str, session_id: str) -> bool:
+        """Whether this visitor turned one of the viewer's switches on."""
+        return await self.store.get(f"{name}:{session_id}") == "1"
+
     async def _reader_on(self, session_id: str) -> bool:
         """Whether this visitor asked to see pages in the reader view."""
-        return await self.store.get(f"reader:{session_id}") == "1"
+        return await self._switch_on("reader", session_id)
+
+    def _may_translate(self, profile: Profile | None) -> bool:
+        return (
+            profile is not None and profile.allow_translate and self.settings.translator is not None
+        )
 
     async def _set_reader(self, request: Request) -> Response:
         """A visitor turns the reader view on or off. It applies to every site they open."""
+        return await self._set_switch(request, "reader", lambda _profile: True)
+
+    async def _set_translate(self, request: Request) -> Response:
+        """A visitor turns translation on or off, if their profile allows it."""
+        return await self._set_switch(request, "translate", self._may_translate)
+
+    async def _set_switch(
+        self, request: Request, name: str, permitted: Callable[[Profile | None], bool]
+    ) -> Response:
         if not self._same_origin(request):
             return self._json(403, "Not allowed.")
         session_id = await self._current_session(request)
         if session_id is None:
             return self._json(403, "Sign in first.")
+        who = await self._who_of(session_id)
+        if not permitted(self.settings.profile_named(who.profile)):
+            return self._json(403, "Not allowed.")
         raw = await self._read_body(request, 64)
         if raw is None:
             return self._json(413, "That request is too large.")
@@ -1036,12 +1071,12 @@ class Gateway:
         if choice not in ("0", "1"):
             return self._json(400, "Choose on or off.")
         if choice == "1":
-            await self.store.put(f"reader:{session_id}", "1", self.settings.session_ttl)
+            await self.store.put(f"{name}:{session_id}", "1", self.settings.session_ttl)
         else:
-            await self.store.delete(f"reader:{session_id}")
+            await self.store.delete(f"{name}:{session_id}")
         headers = apex_headers(self.settings.header_policy)
         headers["Content-Type"] = "application/json"
-        return Response(json.dumps({"reader": choice == "1"}).encode("utf-8"), 200, headers)
+        return Response(json.dumps({name: choice == "1"}).encode("utf-8"), 200, headers)
 
     async def _current_page(self, request: Request) -> Response:
         headers = apex_headers(self.settings.header_policy)
@@ -1054,6 +1089,7 @@ class Gateway:
         except ValueError:
             shown = {}
         shown["reader"] = await self._reader_on(session_id)
+        shown["translate"] = await self._switch_on("translate", session_id)
         return Response(json.dumps(shown).encode("utf-8"), 200, headers)
 
     async def _gate(
@@ -1288,13 +1324,15 @@ class Gateway:
         sent: bytes = b"",
     ) -> Response:
         mapper = PlaceholderMapper(self.settings)
+        translate = self._may_translate(profile) and await self._switch_on("translate", session_id)
         options = HtmlOptions(
             allow_images=profile.allow_images,
             allow_post_forms=profile.allow_post_forms,
             allow_uploads=profile.allow_uploads,
             allow_password_fields=profile.allow_password_fields,
             max_bytes=profile.max_page_bytes,
-            reader=await self._reader_on(session_id),
+            reader=translate or await self._reader_on(session_id),
+            translate_slots=translate,
         )
         try:
             result = await self._in_thread(
@@ -1308,6 +1346,8 @@ class Gateway:
             return self._error("denied")
         labels = await self._label_map(session_id, mapper)
         text = mapper.substitute(result.body.decode("utf-8"), labels)
+        if translate:
+            text = await self._translated(text, result, session_id, page_url)
         if frame_url is not None and status < 400:
             refresh = mapper.substitute(result.refresh_url, labels) if result.refresh_url else ""
             entities = await self._entities_of(result.text, profile)
@@ -1315,6 +1355,37 @@ class Gateway:
                 session_id, page_url, frame_url, result.title, refresh, entities
             )
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
+
+    async def _translated(
+        self, text: str, result: RewriteResult, session_id: str, page_url: OnionUrl
+    ) -> str:
+        """The page with its text translated, or in its own language with a note saying why not.
+
+        Only the words go to the service, after the audit record is written. A failure never stops
+        the page, because translation is a convenience and not a safety check.
+        """
+        translator = self.settings.translator
+        if translator is None or not result.slots:
+            return text
+        who = await self._who_of(session_id)
+        chars = sum(len(piece) for piece in result.slots)
+        found: list[str] | None = None
+        if await self._record("translate", who, page_url.origin, "translate", rule=str(chars)):
+            try:
+                answer = await asyncio.wait_for(
+                    translator.translate(list(result.slots)),
+                    timeout=self.settings.translate_timeout,
+                )
+                if len(answer) == len(result.slots) and all(isinstance(t, str) for t in answer):
+                    found = list(answer)
+            except Exception:
+                _log.warning("a page could not be translated")
+        if found is None:
+            return add_notice(fill_slots(text, result, None), NOT_TRANSLATED_NOTICE)
+        notice = TRANSLATED_NOTICE
+        if result.slots_cut:
+            notice = f"{notice} {PARTLY_TRANSLATED_NOTICE}"
+        return add_notice(fill_slots(text, result, found), notice)
 
     async def _entities_of(self, text: str, profile: Profile) -> list[dict[str, str]] | None:
         """What the page names, for a profile that may see it, else None. Never fails the page."""

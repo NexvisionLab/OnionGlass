@@ -285,7 +285,7 @@ def test_a_policy_is_asked_about_the_site_before_entities_are_sent() -> None:
 
 def test_an_entity_sink_needs_an_audit_log() -> None:
     with pytest.raises(ValueError, match="audit"):
-        Settings(base_domain="localhost", open_mode=True, entity_sink=MemorySink())  # type: ignore[arg-type]
+        Settings(base_domain="localhost", open_mode=True, entity_sink=MemorySink())
 
 
 def test_a_translator_needs_an_audit_log() -> None:
@@ -299,7 +299,7 @@ def test_with_an_audit_log_both_are_accepted() -> None:
         open_mode=True,
         audit=MemoryAudit(),
         translator=FakeTranslator(),
-        entity_sink=MemorySink(),  # type: ignore[arg-type]
+        entity_sink=MemorySink(),
     )
 
 

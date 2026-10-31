@@ -52,9 +52,9 @@ dev = [
 onionglass = "onionglass.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/NexvisionLab/onionglass"
-Issues = "https://github.com/NexvisionLab/onionglass/issues"
-Security = "https://github.com/NexvisionLab/onionglass/security/policy"
+Homepage = "https://github.com/NexvisionLab/OnionGlass"
+Issues = "https://github.com/NexvisionLab/OnionGlass/issues"
+Security = "https://github.com/NexvisionLab/OnionGlass/security/policy"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/onionglass"]

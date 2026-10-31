@@ -43,8 +43,8 @@ Make an API token for the proxy: in Cloudflare, My Profile, API Tokens, create a
 ## 3. The files
 
 ```
-git clone https://github.com/NexvisionLab/onionglass.git
-cd onionglass/deploy/team
+git clone https://github.com/NexvisionLab/OnionGlass.git
+cd OnionGlass/deploy/team
 cp env.example .env              # set DOMAIN and ACME_EMAIL
 mkdir -p secrets state config/keys config/secrets
 ```

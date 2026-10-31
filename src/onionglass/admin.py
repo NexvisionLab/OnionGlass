@@ -83,6 +83,24 @@ def _read_lines(path: Path) -> list[str]:
         raise AdminError(f"cannot read {path.name}") from exc
 
 
+_REPLACE_TRIES = 8
+_REPLACE_PAUSE = 0.02
+
+
+def _replace(source: str, target: Path) -> None:
+    """``os.replace``, tried a few times. Windows refuses it for a moment when another program,
+    such as a virus scanner or the gateway itself, has the target open. A refusal that goes on
+    is passed up."""
+    for attempt in range(_REPLACE_TRIES):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_TRIES - 1:
+                raise
+            time.sleep(_REPLACE_PAUSE * (attempt + 1))
+
+
 def _write_lines(path: Path, lines: list[str]) -> None:
     """Replace a file in one step, so the gateway never reads half of it.
 
@@ -95,7 +113,7 @@ def _write_lines(path: Path, lines: list[str]) -> None:
         )
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
             handle.write("".join(f"{line}\n" for line in lines))
-        os.replace(temporary, path)
+        _replace(temporary, path)
     except OSError as exc:
         if temporary is not None and os.path.exists(temporary):
             os.unlink(temporary)

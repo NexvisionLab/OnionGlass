@@ -429,6 +429,41 @@ def test_stops_issued_at_the_same_moment_are_all_kept(paths: AdminPaths) -> None
     assert not paths.kill.with_name("kill.lock").exists()  # the lock is always cleaned up
 
 
+def test_a_brief_access_denied_while_replacing_the_file_is_retried(
+    paths: AdminPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows refuses to replace a file for a moment if something else has it open."""
+    real = os.replace
+    refusals = [3]
+
+    def flaky(source: Any, target: Any) -> None:
+        if refusals[0] > 0:
+            refusals[0] -= 1
+            raise PermissionError(13, "Access is denied")
+        real(source, target)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    kill_on(paths, "profile", "personal")
+    assert paths.kill is not None
+    assert parse_kill_file(paths.kill.read_text(encoding="utf-8")).profiles == frozenset(
+        {"personal"}
+    )
+    assert refusals[0] == 0
+
+
+def test_a_refusal_that_does_not_pass_is_reported_and_leaves_nothing_behind(
+    paths: AdminPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(source: Any, target: Any) -> None:
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    with pytest.raises(AdminError, match="cannot write kill"):
+        kill_on(paths, "profile", "personal")
+    assert paths.kill is not None
+    assert [p.name for p in paths.kill.parent.glob("*.tmp")] == []
+
+
 def test_a_lock_left_by_a_killed_command_does_not_block_for_ever(paths: AdminPaths) -> None:
     assert paths.kill is not None
     lock = paths.kill.with_name("kill.lock")

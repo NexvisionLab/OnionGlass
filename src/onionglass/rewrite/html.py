@@ -318,6 +318,7 @@ class _Emitter:
         self.slots: list[str] = []
         self.slots_cut = False
         self._slot_chars = 0
+        self._raw_depth = 0  # how many code-like elements the walk is inside
         wants_slots = options.reader and options.translate_slots
         self.slot_token = f"ogt{secrets.token_hex(8)}x" if wants_slots else ""
 
@@ -329,11 +330,11 @@ class _Emitter:
             self.external_links += 1
         return resolved
 
-    def _text_out(self, text: str, stack: list[tuple[LexborNode, str]]) -> str:
+    def _text_out(self, text: str) -> str:
         """The text as it goes into the page. When the page is to be translated, the words are
         taken out and a slot is left in their place, with the spacing around them kept."""
         escaped = html_lib.escape(text, quote=False)
-        if not self.slot_token or any((node.tag or "") in _NO_TRANSLATE for node, _ in stack):
+        if not self.slot_token or self._raw_depth > 0:
             return escaped
         core = text.strip()
         if not core or not any(char.isalpha() for char in core):
@@ -655,6 +656,8 @@ class _Emitter:
         while current is not None or stack:
             if current is None:
                 finished, closing = stack.pop()
+                if (finished.tag or "") in _NO_TRANSLATE:
+                    self._raw_depth -= 1
                 if closing:
                     self.out.append(closing)
                 current = finished.next
@@ -665,7 +668,7 @@ class _Emitter:
                 parent = stack[-1][0].tag if stack else ""
                 if parent in ("pre", "textarea") and text.startswith("\n"):
                     text = "\n" + text
-                self.out.append(self._text_out(text, stack))
+                self.out.append(self._text_out(text))
                 self._capture(text)
                 current = current.next
                 continue
@@ -678,6 +681,8 @@ class _Emitter:
             descend, closing = self._open_element(current)
             if descend and current.child is not None and len(stack) < MAX_DEPTH:
                 stack.append((current, closing))
+                if tag in _NO_TRANSLATE:
+                    self._raw_depth += 1
                 current = current.child
                 continue
             if descend and closing:

@@ -26,6 +26,7 @@ from onionglass.hooks import HookTarget, parse_hook_url
 
 MAX_REPLY = 2_000_000
 MAX_TEXTS_PER_CALL = 100
+MAX_ANSWER_CHARS = 1_000_000
 MAX_CHARS_PER_CALL = 20_000
 MAX_TIMEOUT = 300.0
 MAX_KEY = 256
@@ -111,8 +112,13 @@ class LibreTranslate:
 
     async def _translate_all(self, texts: list[str]) -> list[str]:
         done: list[str] = []
+        total = 0
         for chunk in _chunks(texts):
-            done.extend(await self._call(chunk))
+            answers = await self._call(chunk)
+            total += sum(len(answer) for answer in answers)
+            if total > MAX_ANSWER_CHARS:
+                raise TranslateError("the translation service returned too much text")
+            done.extend(answers)
         return done
 
     async def _call(self, texts: list[str]) -> list[str]:
@@ -168,6 +174,12 @@ class LibreTranslate:
         for original, translated in zip(texts, found, strict=True):
             if not isinstance(translated, str):
                 raise TranslateError("the translation service returned something that is not text")
+            try:
+                translated.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise TranslateError(
+                    "the translation service returned text that cannot be used"
+                ) from exc
             if len(translated) > 20 * len(original) + 1000:
                 raise TranslateError("a translation is too long for the text it came from")
         return [str(t) for t in found]

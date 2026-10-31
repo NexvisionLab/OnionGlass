@@ -53,6 +53,7 @@ class MemorySink:
 
 
 def served(sink: MemorySink | None, profile: Profile = SENDER, **extra: Any) -> Env:
+    extra.setdefault("audit", MemoryAudit())  # every send must be on record
     return Env(lambda _r: reply(PAGE_TEXT), profile=profile, entity_sink=sink, **extra)
 
 
@@ -157,7 +158,12 @@ def test_there_is_nothing_to_send_before_a_page_has_been_viewed() -> None:
 
 def test_a_page_that_names_nothing_sends_nothing() -> None:
     sink = MemorySink()
-    env = Env(lambda _r: reply("<title>x</title><p>plain</p>"), profile=SENDER, entity_sink=sink)
+    env = Env(
+        lambda _r: reply("<title>x</title><p>plain</p>"),
+        profile=SENDER,
+        entity_sink=sink,
+        audit=MemoryAudit(),
+    )
     look(env)
     assert send(env).status_code == 400
     assert sink.batches == []
@@ -206,7 +212,13 @@ def test_a_sink_that_hangs_does_not_hang_the_gateway() -> None:
         async def send(self, batch: EntityBatch) -> None:
             await asyncio.sleep(30)
 
-    env = Env(lambda _r: reply(PAGE_TEXT), profile=SENDER, entity_sink=Hanging(), hook_timeout=0.05)
+    env = Env(
+        lambda _r: reply(PAGE_TEXT),
+        profile=SENDER,
+        entity_sink=Hanging(),
+        hook_timeout=0.05,
+        audit=MemoryAudit(),
+    )
     look(env)
     assert send(env).status_code == 502
 

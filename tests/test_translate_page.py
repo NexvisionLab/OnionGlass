@@ -180,6 +180,7 @@ ALLOWED = Profile(name="personal", allow_translate=True)
 
 
 def served(translator: FakeTranslator | None, profile: Profile = ALLOWED, **extra: Any) -> Env:
+    extra.setdefault("audit", MemoryAudit())  # every send must be on record
     return Env(lambda _r: reply(PAGE), profile=profile, translator=translator, **extra)
 
 
@@ -259,7 +260,9 @@ def test_a_service_that_hangs_does_not_hang_the_page() -> None:
 
 def test_the_page_says_when_only_part_of_it_was_translated() -> None:
     many = "".join(f"<p>mot {n}</p>" for n in range(MAX_TRANSLATION_SLOTS + 5))
-    env = Env(lambda _r: reply(many), profile=ALLOWED, translator=FakeTranslator())
+    env = Env(
+        lambda _r: reply(many), profile=ALLOWED, translator=FakeTranslator(), audit=MemoryAudit()
+    )
     label = env.open()
     switch(env.client, True)
     text = page(env, label)
@@ -354,6 +357,7 @@ def test_entities_are_still_found_in_the_original_text() -> None:
         lambda _r: reply(f"<title>x</title><p>Payez {GENESIS} maintenant</p>"),
         profile=Profile(name="personal", allow_translate=True, show_entities=True),
         translator=FakeTranslator(),
+        audit=MemoryAudit(),
     )
     label = env.open()
     switch(env.client, True)

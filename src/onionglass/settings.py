@@ -155,6 +155,7 @@ class Settings:
     max_entity_sends_per_session: int = 20
     translator: Translator | None = None
     translate_timeout: float = 20.0
+    max_concurrent_translations: int = 8
     metrics_token: str | None = None
     name_gate: NameGate | None = None
     hook_timeout: float = 2.0
@@ -182,6 +183,7 @@ class Settings:
             "max_request_body": self.max_request_body,
             "max_reports_per_session": self.max_reports_per_session,
             "max_entity_sends_per_session": self.max_entity_sends_per_session,
+            "max_concurrent_translations": self.max_concurrent_translations,
             "name_gate_hold_after": self.name_gate_hold_after,
         }
         for label, number in counts.items():
@@ -202,6 +204,11 @@ class Settings:
         """A profile that needs a service the gateway does not have is an error, not a button
         that does nothing."""
         every = (self.profile, *self.profiles.values())
+        if self.audit is None and (self.entity_sink is not None or self.translator is not None):
+            raise ValueError(
+                "an entity sink or a translator needs an audit log, because every send "
+                "must be on record"
+            )
         if self.entity_sink is None and any(p.send_entities for p in every):
             raise ValueError("a profile sends entities but no entity sink is configured")
         if self.translator is None and any(p.allow_translate for p in every):

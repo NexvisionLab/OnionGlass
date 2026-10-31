@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -22,7 +23,7 @@ import logging
 import secrets
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote_plus, urlsplit
@@ -192,6 +193,12 @@ _ACCEPT_BY_DESTINATION = {
     "font": ACCEPT_ANY,
 }
 _FORM_LIMIT = 8192
+ATTEMPTS_PER_SEND = 4  # tries, failed ones included, for each send a session is allowed
+_SEND_REFUSED = {
+    "paused": (503, "This gateway is paused, so nothing was sent."),
+    "denied": (403, "Not allowed."),
+    "policy_unavailable": (503, "The policy could not be checked, so nothing was sent."),
+}
 _NAVIGATION_DESTINATIONS = frozenset({"iframe", "document", "frame"})
 
 
@@ -226,6 +233,8 @@ class Gateway:
         self._active_fetches = 0
         self._active_by_session: dict[str, int] = {}
         self._new_sessions: deque[float] = deque()
+        self._locks: dict[str, tuple[asyncio.Lock, int]] = {}
+        self._translating = 0
         self._requests: dict[str, deque[float]] = {}
         self.metrics = Metrics(pages.ERRORS)
         self.app = Starlette(
@@ -834,6 +843,21 @@ class Gateway:
         self._set_session_cookie(response, session_id)
         return response
 
+    @contextlib.asynccontextmanager
+    async def _exclusive(self, key: str) -> AsyncIterator[None]:
+        """One at a time for this key, so a count that is read and then written cannot be raced."""
+        lock, users = self._locks.get(key) or (asyncio.Lock(), 0)
+        self._locks[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            lock, users = self._locks[key]
+            if users <= 1:
+                del self._locks[key]
+            else:
+                self._locks[key] = (lock, users - 1)
+
     # --- the viewer ------------------------------------------------------------------------
 
     def _viewer_url(self, label: str, path: str, query: str) -> str:
@@ -959,18 +983,19 @@ class Gateway:
         except (ValueError, KeyError, TypeError, InvalidOnionError):
             return self._json(400, "There is no page to report yet.")
         counter = f"rep:{session_id}"
-        sent = int(await self.store.get(counter) or 0)
-        if sent >= self.settings.max_reports_per_session:
-            return self._json(429, "You have sent as many reports as are allowed for now.")
         who = await self._who_of(session_id)
-        try:
-            outcome = await queue.submit(origin.host.address, category, who.subject)
-        except ReportError:
-            _log.warning("a report could not be recorded")
-            return self._json(503, "The report could not be recorded. Try again later.")
-        if outcome == "received":
-            await self.store.put(counter, str(sent + 1), 86_400)
-            await self._record("report", who, origin, "report", rule=category)
+        async with self._exclusive(counter):
+            sent = int(await self.store.get(counter) or 0)
+            if sent >= self.settings.max_reports_per_session:
+                return self._json(429, "You have sent as many reports as are allowed for now.")
+            try:
+                outcome = await queue.submit(origin.host.address, category, who.subject)
+            except ReportError:
+                _log.warning("a report could not be recorded")
+                return self._json(503, "The report could not be recorded. Try again later.")
+            if outcome == "received":
+                await self.store.put(counter, str(sent + 1), 86_400)
+                await self._record("report", who, origin, "report", rule=category)
         return self._json(200, pages.REPORT_MESSAGES[outcome])
 
     async def _entities_shown(self, session_id: str) -> tuple[OnionUrl, tuple[Entity, ...]] | None:
@@ -1006,28 +1031,39 @@ class Gateway:
             return self._json(403, "Not allowed.")
         if await self._read_body(request, 1024) is None:
             return self._json(413, "That request is too large.")
+        if not self._take_rate_slot(session_id, profile):
+            self.metrics.inc("refusals_total", reason="rate-limit")
+            return self._json(429, "Slow down and try again in a minute.")
         shown = await self._entities_shown(session_id)
         if shown is None:
             return self._json(400, "There is nothing to send yet.")
         page, found = shown
-        counter = f"ent:{session_id}"
-        sent = int(await self.store.get(counter) or 0)
-        if sent >= self.settings.max_entity_sends_per_session:
-            return self._json(429, "You have sent as much as is allowed for now.")
         place = page.path + (f"?{page.query}" if page.query else "")
-        if not await self._record(
-            "entities", who, page.origin, "send", rule=str(len(found)), path=place
-        ):
-            return self._json(503, "The send could not be recorded, so it was not made.")
-        batch = EntityBatch(
-            who.subject, who.group, who.profile, page.origin.key, place, found, time.time()
-        )
-        try:
-            await asyncio.wait_for(sink.send(batch), timeout=self.settings.hook_timeout)
-        except Exception:
-            _log.warning("entities could not be sent")
-            return self._json(502, "The entities could not be sent. Try again later.")
-        await self.store.put(counter, str(sent + 1), 86_400)
+        # The site may have been stopped, held or denied since the visitor was shown it.
+        verdict = await self._screen(who, page.origin, "fetch", place)
+        if verdict.refusal is not None:
+            return self._json(*_SEND_REFUSED.get(verdict.refusal, (403, "Not allowed.")))
+        sent_key, tried_key = f"ent:{session_id}", f"entt:{session_id}"
+        allowed = self.settings.max_entity_sends_per_session
+        async with self._exclusive(sent_key):
+            sent = int(await self.store.get(sent_key) or 0)
+            tried = int(await self.store.get(tried_key) or 0)
+            if sent >= allowed or tried >= allowed * ATTEMPTS_PER_SEND:
+                return self._json(429, "You have sent as much as is allowed for now.")
+            if not await self._record(
+                "entities", who, page.origin, "send", rule=str(len(found)), path=place
+            ):
+                return self._json(503, "The send could not be recorded, so it was not made.")
+            await self.store.put(tried_key, str(tried + 1), 86_400)
+            batch = EntityBatch(
+                who.subject, who.group, who.profile, page.origin.key, place, found, time.time()
+            )
+            try:
+                await asyncio.wait_for(sink.send(batch), timeout=self.settings.hook_timeout)
+            except Exception:
+                _log.warning("entities could not be sent")
+                return self._json(502, "The entities could not be sent. Try again later.")
+            await self.store.put(sent_key, str(sent + 1), 86_400)
         noun = "entity" if len(found) == 1 else "entities"
         return self._json(200, f"Sent {len(found)} {noun}.")
 
@@ -1347,7 +1383,8 @@ class Gateway:
         labels = await self._label_map(session_id, mapper)
         text = mapper.substitute(result.body.decode("utf-8"), labels)
         if translate:
-            text = await self._translated(text, result, session_id, page_url)
+            room = max(profile.max_page_bytes, len(text.encode("utf-8")))
+            text = await self._translated(text, result, session_id, page_url, room)
         if frame_url is not None and status < 400:
             refresh = mapper.substitute(result.refresh_url, labels) if result.refresh_url else ""
             entities = await self._entities_of(result.text, profile)
@@ -1357,35 +1394,64 @@ class Gateway:
         return Response(text.encode("utf-8"), status, document_headers(self.settings.header_policy))
 
     async def _translated(
-        self, text: str, result: RewriteResult, session_id: str, page_url: OnionUrl
+        self, text: str, result: RewriteResult, session_id: str, page_url: OnionUrl, limit: int
     ) -> str:
         """The page with its text translated, or in its own language with a note saying why not.
 
-        Only the words go to the service, after the audit record is written. A failure never stops
-        the page, because translation is a convenience and not a safety check.
+        Only the words go to the service, after the audit record is written, and only so many
+        pages are translated at once. A failure never stops the page, because translation is a
+        convenience and not a safety check.
         """
-        translator = self.settings.translator
-        if translator is None or not result.slots:
+        if self.settings.translator is None or not result.slots:
             return text
+        filled: str | None = None
+        if self._translating < self.settings.max_concurrent_translations:
+            self._translating += 1
+            try:
+                filled = await self._translate_now(text, result, session_id, page_url, limit)
+            finally:
+                self._translating -= 1
+        if filled is None:
+            return add_notice(fill_slots(text, result, None), NOT_TRANSLATED_NOTICE)
+        return filled
+
+    async def _translate_now(
+        self, text: str, result: RewriteResult, session_id: str, page_url: OnionUrl, limit: int
+    ) -> str | None:
+        translator = self.settings.translator
+        if translator is None:
+            return None
         who = await self._who_of(session_id)
         chars = sum(len(piece) for piece in result.slots)
-        found: list[str] | None = None
-        if await self._record("translate", who, page_url.origin, "translate", rule=str(chars)):
+        if not await self._record("translate", who, page_url.origin, "translate", rule=str(chars)):
+            return None
+        try:
+            answer = await asyncio.wait_for(
+                translator.translate(list(result.slots)), timeout=self.settings.translate_timeout
+            )
+            return self._filled(text, result, answer, limit)
+        except Exception:
+            _log.warning("a page could not be translated")
+            return None
+
+    @staticmethod
+    def _filled(text: str, result: RewriteResult, answer: Any, limit: int) -> str | None:
+        """The page with the answer in its slots, or None if the answer cannot be trusted: not one
+        text for each slot, text that cannot be sent, or a page that would be too large."""
+        if not isinstance(answer, list) or len(answer) != len(result.slots):
+            return None
+        for piece in answer:
+            if not isinstance(piece, str):
+                return None
             try:
-                answer = await asyncio.wait_for(
-                    translator.translate(list(result.slots)),
-                    timeout=self.settings.translate_timeout,
-                )
-                if len(answer) == len(result.slots) and all(isinstance(t, str) for t in answer):
-                    found = list(answer)
-            except Exception:
-                _log.warning("a page could not be translated")
-        if found is None:
-            return add_notice(fill_slots(text, result, None), NOT_TRANSLATED_NOTICE)
+                piece.encode("utf-8")
+            except UnicodeEncodeError:
+                return None
         notice = TRANSLATED_NOTICE
         if result.slots_cut:
             notice = f"{notice} {PARTLY_TRANSLATED_NOTICE}"
-        return add_notice(fill_slots(text, result, found), notice)
+        filled = add_notice(fill_slots(text, result, answer), notice)
+        return filled if len(filled.encode("utf-8")) <= limit else None
 
     async def _entities_of(self, text: str, profile: Profile) -> list[dict[str, str]] | None:
         """What the page names, for a profile that may see it, else None. Never fails the page."""

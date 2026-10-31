@@ -224,12 +224,12 @@ The sections:
 | `[server]` | Domain, scheme, where the proxy reaches the gateway, port. |
 | `[tor]` | The Tor host and one SOCKS port for each Tor process. |
 | `[tickets]` | Audience, whether a sign-in link asks for a click, and the public keys that may sign visitors in. |
-| `[limits]` | Session lifetime, labels per session and per page, new sessions per minute, concurrent fetches, opens per session, reports per session, entity sends per session, request body size, hook timeout. |
+| `[limits]` | Session lifetime, labels per session and per page, new sessions per minute, concurrent fetches, opens per session, reports per session, entity sends per session, pages translated at once, request body size, hook timeout. |
 | `[profile]`, `[profiles.NAME]` | What a visitor may do. A ticket names its profile, and an unknown name is refused. |
 | `[policy]` | Blocklist, allowlist and rated list. |
 | `[kill]`, `[held]`, `[names]`, `[known_sites]`, `[reports]` | The stop file, held sites, the name gate, the look-alike list and the report queue. |
 | `[audit]`, `[quota]`, `[metrics]`, `[abuse]` | The audit log, the allowance journal, the metrics token, and the abuse contact. |
-| `[translate]` | The translation service: its address, the target language, an optional key file and a time limit. |
+| `[translate]` | The translation service: its address, the target language, an optional key file and a time limit. Needs an audit log, because every page sent is recorded. |
 | `[hooks]` | A signed HTTP service that takes over policy, audit, quota or entity sending. |
 
 A profile has these settings. The defaults are the cautious ones:

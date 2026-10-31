@@ -444,7 +444,7 @@ def _limits(reader: _Reader) -> dict[str, Any]:
             "session_hours", "max_labels_per_session", "max_labels_per_page",
             "max_new_sessions_per_minute", "max_concurrent_fetches", "max_fetches_per_session",
             "max_request_body", "max_reports_per_session", "hook_timeout", "max_opens_per_session",
-            "max_entity_sends_per_session",
+            "max_entity_sends_per_session", "max_concurrent_translations",
         },
     )  # fmt: skip
     found: dict[str, Any] = {}
@@ -452,6 +452,7 @@ def _limits(reader: _Reader) -> dict[str, Any]:
         "max_labels_per_session", "max_labels_per_page", "max_new_sessions_per_minute",
         "max_concurrent_fetches", "max_fetches_per_session", "max_request_body",
         "max_reports_per_session", "max_opens_per_session", "max_entity_sends_per_session",
+        "max_concurrent_translations",
     ):  # fmt: skip
         value = _get(table, key, int, "[limits]")
         if value is not None:

@@ -37,6 +37,7 @@ max_opens_per_session = 100     # addresses one session may type in
 max_labels_per_page = 100
 max_reports_per_session = 10
 max_entity_sends_per_session = 20   # times a session may send entities on
+max_concurrent_translations = 8     # pages translated at the same moment, across all visitors
 hook_timeout = 2.0               # seconds a policy, audit or quota service has to answer
 
 # The profile for a ticket that names no other, and for every session if you use only one.

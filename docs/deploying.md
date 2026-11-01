@@ -141,6 +141,8 @@ Read [censorship.md](censorship.md) first. It says what a gateway can and cannot
 - **A domain for each group** (`onionglass domains add`), each its own gateway service. `compose.yaml` has a commented example, and `onionglass domains caddy` prints the proxy block for every domain. Each domain needs its own DNS records and wildcard certificate, and the DNS token must cover every zone.
 - **`onionglass domains check`** to see where a domain fails, from the server and from a trusted machine inside the country.
 
+Tor bridges and Snowflake proxies do not go in this bundle and must not share the gateway's server. [bridges.md](bridges.md) says how to run them on another one.
+
 Points about the proxy:
 
 - **HTTP/3 (QUIC).** The Great Firewall reads the server name inside QUIC and blocks by it, so a domain blocked over HTTPS is blocked over HTTP/3 as well. Leaving HTTP/3 on does no harm, but it is not a defence.

@@ -388,6 +388,7 @@ Onion sites can host illegal and harmful material. The project includes blocklis
 - [Operator responsibilities](docs/operator-responsibilities.md)
 - [Abuse procedure](docs/abuse-procedure.md)
 - [Censorship](docs/censorship.md): what a gateway can and cannot do where the internet is blocked, and how to run one there.
+- [Tor bridges](docs/bridges.md): running a Snowflake proxy or a WebTunnel bridge on a separate server, to help people reach Tor directly.
 
 ## Security
 

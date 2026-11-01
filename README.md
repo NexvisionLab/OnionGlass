@@ -391,6 +391,7 @@ Onion sites can host illegal and harmful material. The project includes blocklis
 - [Censorship](docs/censorship.md): what a gateway can and cannot do where the internet is blocked, and how to run one there.
 - [Entry relays](docs/relays.md): many addresses in front of one hidden gateway, so that blocking an address costs less.
 - [Tor bridges](docs/bridges.md): running a Snowflake proxy or a WebTunnel bridge on a separate server, to help people reach Tor directly.
+- [Handing out domains and links](docs/distribution.md): how to give people a domain or a link without handing it to the censor, built on what a ticket carries.
 
 ## Security
 

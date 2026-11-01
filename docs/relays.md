@@ -163,7 +163,7 @@ WantedBy=multi-user.target
 
 Give the domain and `*.domain` an address record for each relay. Visitors will be sent to one of them. When a relay's address is blocked, remove its records. A short lifetime on the records makes that quicker.
 
-Check from outside with `onionglass domains check --domain gateway.example.org`, and from a trusted machine in the country for the real answer.
+Check from outside with `onionglass domains check --domain gateway.example.org`, and from a trusted machine in the country for the real answer. How the domain and the links to it are handed out matters as much as where it points. See [distribution.md](distribution.md).
 
 ### 6. Require relays
 

@@ -66,7 +66,7 @@ Do not publish the bridge line on the gateway's pages, on your website or anywhe
 
 - By default a WebTunnel bridge is given out through the Tor Project's own bridge service, [bridges.torproject.org](https://bridges.torproject.org). For most operators that is the right choice, and it needs nothing more from you.
 - If you give lines to your own users, treat them as you treat gateway domains: give each group its own, give them through a channel the censor cannot easily read, and expect to replace them. Step 4 of [what to do as an operator](censorship.md#what-to-do-as-an-operator) says why.
-- Your sign-in service decides who is told what. A sign-in ticket from onionglass does not carry a bridge line, and this page does not add one.
+- Your sign-in service decides who is told what, and [distribution.md](distribution.md) has the rules of thumb. A sign-in ticket from onionglass does not carry a bridge line, and this page does not add one.
 
 ## What this does not do
 

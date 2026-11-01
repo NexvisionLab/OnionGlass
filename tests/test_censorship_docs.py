@@ -65,6 +65,21 @@ def test_the_readme_and_the_deploy_guide_point_to_the_page() -> None:
     assert "censorship.md" in (DOCS / "deploying.md").read_text(encoding="utf-8")
 
 
+def test_the_deploy_guide_says_what_encrypted_client_hello_needs_and_what_is_untested() -> None:
+    text = (DOCS / "deploying.md").read_text(encoding="utf-8")
+    ech = text.split("**Encrypted Client Hello**", 1)[1].split("\n", 1)[0]
+    assert "2.10" in ech and "DNS" in ech  # the version that has it, and the plugin it needs
+    assert "not tried" in ech  # it has not been run here, and the guide says so
+    assert "have not checked" not in text  # the open question is answered
+    assert "Encrypted client hello is planned" not in text
+
+
+def test_the_bundle_builds_caddy_with_a_dns_plugin_so_that_ech_can_work() -> None:
+    dockerfile = (ROOT / "deploy" / "team" / "proxy" / "Dockerfile").read_text(encoding="utf-8")
+    assert "xcaddy build --with github.com/caddy-dns/" in dockerfile
+    assert "FROM caddy:2" in dockerfile  # a 2.x tag, so it follows to 2.10 and later
+
+
 def test_the_entry_page_warns_that_the_operator_sees_everything() -> None:
     text = pages.landing_page(can_open=False).decode("utf-8")
     assert "can see every address you open" in text and "Tor Browser" in text

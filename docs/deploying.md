@@ -144,13 +144,13 @@ Read [censorship.md](censorship.md) first. It says what a gateway can and cannot
 Points about the proxy:
 
 - **HTTP/3 (QUIC).** The Great Firewall reads the server name inside QUIC and blocks by it, so a domain blocked over HTTPS is blocked over HTTP/3 as well. Leaving HTTP/3 on does no harm, but it is not a defence.
-- **Encrypted Client Hello** hides the server name in the TLS hello, but a client needs the encrypted DNS lookup that carries its key, and China and Iran block those lookups. In those countries it usually cannot start. Turn it on if your proxy supports it and you want it for visitors elsewhere, but do not count on it. I have not checked which version of Caddy in this bundle can serve it.
+- **Encrypted Client Hello** hides the server name in the TLS hello, but a client needs the encrypted DNS lookup that carries its key, and China and Iran block those lookups. In those countries it usually cannot start. Caddy can serve it from version 2.10, and it needs a DNS plugin built in to publish the key, which this bundle's proxy image already has. The bundle follows the `caddy:2` tag, so a fresh build gets 2.10 or later. The setting is the `ech` option in the Caddyfile's global block, next to the `dns` line, naming a public outer domain. The setting is not tried here, and the Caddy documentation is the place to confirm its exact form, so the bundle does not switch it on. Turn it on if you want it for visitors elsewhere, but do not count on it.
 - **A content network in front of the gateway** gives a censor shared addresses to worry about, which helps. But the network then sees every page a visitor reads, which breaks the promise that only you do. The bundle does not do it, and I do not recommend it.
 - **Certificates are public.** Each new domain's certificate appears in certificate transparency logs, so assume a new domain can be found by anyone watching them.
 
 ## What this does not give you
 
 - **Anonymity from you.** You, and anyone who breaks into the server, can see every address visitors open. The entry page says so. Do not describe the service as anonymous.
-- **Encrypted client hello.** The name of the site a visitor reaches is a random-looking sub-domain, so nothing about the onion address leaks in a certificate or in a name lookup, but the domain itself is visible to anyone watching the network. Encrypted client hello is planned.
+- **Encrypted client hello.** The name of the site a visitor reaches is a random-looking sub-domain, so nothing about the onion address leaks in a certificate or in a name lookup, but the domain itself is visible to anyone watching the network. Encrypted Client Hello would hide it from some watchers, and the proxy notes above say what it needs and where it does not work.
 - **A sign-in service**, the legal review, the abuse contact and the reporting route. Those are yours.
 - **An independent penetration test.** The project has had three reviews and a lot of testing, and none of it replaces a test by someone outside it before you open the service to the public.

@@ -23,13 +23,13 @@ import logging
 import secrets
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote_plus, urlsplit
 
 from starlette.applications import Starlette
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response
 from starlette.routing import Route
 
@@ -57,6 +57,8 @@ from onionglass.mapper import PlaceholderMapper
 from onionglass.metrics import Metrics, reason_for, token_matches
 from onionglass.onion import InvalidOnionError, OnionHost, OnionOrigin, OnionUrl, parse_onion_url
 from onionglass.policy import Decision, PolicyRequest
+from onionglass.relayauth import CHECK_HEADER, RelayAuthError, RelayVerifier
+from onionglass.relayauth import HEADER as RELAY_HEADER
 from onionglass.reports import CATEGORIES, ReportError
 from onionglass.rewrite.css import CssError, CssOptions, sanitize_stylesheet, verify_stylesheet
 from onionglass.rewrite.html import (
@@ -201,6 +203,39 @@ _SEND_REFUSED = {
     "policy_unavailable": (503, "The policy could not be checked, so nothing was sent."),
 }
 _NAVIGATION_DESTINATIONS = frozenset({"iframe", "document", "frame"})
+_DISCARD_SECONDS = 5.0  # how long a stranger may take to finish a body the gateway will not use
+
+
+class _AnyMethod:
+    """Hands a request of any method to a handler. The router gives a plain function only the
+    methods it was told about, and answers all others with its own page."""
+
+    def __init__(self, handler: Callable[[Request], Awaitable[Response]], limit: int) -> None:
+        self._handler = handler
+        self._limit = limit
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        request = Request(scope, receive, send)
+        response = await self._handler(request)
+        await _discard_body(request, self._limit)
+        await response(scope, receive, send)
+
+
+async def _discard_body(request: Request, limit: int) -> None:
+    """Read and throw away what is left of the request's body, up to a limit and a short time,
+    before answering. Answering a client that is still sending, and then closing on it, can reset
+    the connection, and the client may never read the answer. The cover page and the missing page
+    are answers a stranger must be able to read, because a probe that cannot is a probe that
+    learns something."""
+    try:
+        async with asyncio.timeout(_DISCARD_SECONDS):
+            seen = 0
+            async for chunk in request.stream():
+                seen += len(chunk)
+                if seen > limit:
+                    return
+    except (RuntimeError, TimeoutError, ClientDisconnect):
+        return  # already read, or too slow, or gone: nothing more to do
 
 
 class Gateway:
@@ -236,15 +271,30 @@ class Gateway:
         self._new_sessions: deque[float] = deque()
         self._locks: dict[str, tuple[asyncio.Lock, int]] = {}
         self._translating = 0
+        self.relay_verifier = (
+            RelayVerifier(settings.relay_keys, skew=settings.relay_skew)
+            if settings.relay_keys is not None
+            else None
+        )
         self._requests: dict[str, deque[float]] = {}
         self.metrics = Metrics(pages.ERRORS)
         # The framework answers a method that is not listed with its own "405 Method Not Allowed",
-        # which would show a stranger that this is not an ordinary site. In cover mode every
-        # method reaches the gateway, which answers a stranger as a missing page.
-        methods = ["GET", "HEAD", "POST"]
-        if settings.cover is not None:
-            methods += ["PUT", "DELETE", "PATCH", "OPTIONS"]
-        self.app = Starlette(routes=[Route("/{path:path}", self._handle, methods=methods)])
+        # and an address that is not a path with its own "Not Found", which would show a stranger
+        # that this is not an ordinary site. In cover mode every method and every address reaches
+        # the gateway or ends in the cover page, which answers a stranger as a missing page.
+        if settings.cover is None:
+            route = Route("/{path:path}", self._handle, methods=["GET", "HEAD", "POST"])
+        else:
+            # A route given an object, not a function, takes every method the client can name.
+            route = Route("/{path:path}", _AnyMethod(self._handle, settings.max_request_body))
+        self.app = Starlette(
+            routes=[route],
+            exception_handlers={404: self._unrouted} if settings.cover is not None else None,
+        )
+
+    async def _unrouted(self, request: Request, exc: Exception) -> Response:
+        """An address the router could not place, such as ``*`` or one with a scheme in it."""
+        return self._cover_missing()
 
     # --- helpers ---------------------------------------------------------------------------
 
@@ -590,6 +640,9 @@ class Gateway:
     async def _handle(self, request: Request) -> Response:
         host = request.headers.get("host", "")
         try:
+            early = await self._relay_gate(request)
+            if early is not None:
+                return early
             if len(request.headers.getlist("host")) > 1:
                 if self.settings.cover is not None:
                     return self._cover_missing()
@@ -619,6 +672,85 @@ class Gateway:
             if self._hide_errors(request):
                 return self._cover_missing()
             return self._error("internal")
+
+    # --- relays ----------------------------------------------------------------------------
+
+    def _signing_relay(self, request: Request) -> str | None:
+        """The id of the relay that signed this exact request, or None for anyone else."""
+        verifier = self.relay_verifier
+        if verifier is None:
+            return None
+        values = request.headers.getlist(RELAY_HEADER)
+        if len(values) != 1:
+            return None
+        raw_path = request.scope.get("raw_path") or request.url.path.encode("ascii", "replace")
+        query = request.scope.get("query_string", b"")
+        target = raw_path.decode("latin-1") + (f"?{query.decode('latin-1')}" if query else "")
+        host = request.headers.get("host", "")
+        try:
+            return verifier.verify(values[0], request.method, host, target)
+        except RelayAuthError:
+            return None
+
+    async def _relay_gate(self, request: Request) -> Response | None:
+        """An answer given before anything else, or None to carry on as usual. A visit that did
+        not come through a relay is turned away when relays are required, and a relay may ask
+        whether the gateway knows its key."""
+        relay = self._signing_relay(request)
+        if relay is None:
+            if not self.settings.relay_required:
+                return None
+            return await self._not_relayed(request)
+        request.state.relay = relay  # so that it is not taken for this machine's own supervisor
+        if (
+            request.method in ("GET", "HEAD")
+            and request.url.path == "/_og/relay-check"
+            and request.headers.get(CHECK_HEADER) == "1"
+        ):
+            return self._relay_check(relay)
+        return None
+
+    @staticmethod
+    def _is_local(request: Request) -> bool:
+        """The request came from this machine itself, as a supervisor's health check does. A
+        visitor reaching the gateway through a relay on this machine looks the same on the wire
+        and must not be taken for it, so a request that carries a relay's signature is never
+        local, even when the signature fails: a clock that is wrong or a key that was just revoked
+        must not turn a visitor into the supervisor."""
+        if getattr(request.state, "relay", None) is not None or request.headers.get(RELAY_HEADER):
+            return False  # it came through a relay, whether or not the signature turned out good
+        return request.client is not None and request.client.host in ("127.0.0.1", "::1")
+
+    @staticmethod
+    def _relay_check(relay: str) -> Response:
+        """What a relay's operator sees when checking that the gateway knows the relay's key."""
+        return Response(
+            f"ok {relay}\n",
+            200,
+            {"content-type": "text/plain; charset=utf-8", "cache-control": "no-store"},
+        )
+
+    async def _not_relayed(self, request: Request) -> Response:
+        """A visit that did not come through a relay, for a gateway that serves only relays. It
+        sees what any stranger sees in cover mode, and cannot sign in, open or report anything.
+        This machine's own supervisor may ask for the health check, and a scraper with the token
+        for the metrics."""
+        cover = self.settings.cover
+        path, method = request.url.path, request.method
+        reading = method in ("GET", "HEAD")
+        apex = self.settings.hosts.is_apex(request.headers.get("host", ""))
+        if apex and method == "GET" and path == "/_og/metrics":
+            answer = await self._handle_apex(request)
+            if answer.status_code < 400:
+                return answer
+        elif apex and reading and path == "/_og/health" and self._is_local(request):
+            return await self._handle_apex(request)
+        # What follows is a stranger turned away, which is what the count is of. The supervisor
+        # and the scraper, served above, are not.
+        self.metrics.inc("refusals_total", reason="not-relayed")
+        if cover is not None and apex and reading and path == "/":
+            return Response(cover.page, 200, cover_headers(self.settings.header_policy))
+        return self._cover_missing()
 
     # --- cover mode ------------------------------------------------------------------------
 
@@ -651,7 +783,7 @@ class Gateway:
         ):
             answer = await self._handle_apex(request)
             return answer if answer.status_code < 400 else self._cover_missing()
-        local = request.client is not None and request.client.host in ("127.0.0.1", "::1")
+        local = self._is_local(request)
         if path == "/_og/health" and reading and local:
             return await self._handle_apex(request)
         return self._cover_missing()

@@ -138,3 +138,16 @@ file = "state/quota.log"         # keeps daily counts across restarts
 # cache_seconds = 5
 # audit_address_form = "origin"    # what the audit service is told: full, origin, hash or none
 # audit_salt_file = "secrets/audit.salt"  # keys the hash form, so it can be compared later
+
+# Entry relays (docs/relays.md). With relays on, the gateway can be kept out of sight. Once
+# every visitor comes through a relay, set require to true: the gateway then answers only the
+# requests a relay signed, and shows every other visitor the cover page. 'onionglass relays
+# add' writes this section. Cover mode, above, must be on first.
+#
+# [relays]
+# require = false          # true once every visitor comes through a relay
+# max_skew_seconds = 60    # how far a relay's clock may differ from this one
+#
+# [[relays.keys]]
+# id = "r1"
+# public_key_file = "keys/relay-r1.public.pem"

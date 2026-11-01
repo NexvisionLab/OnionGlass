@@ -1,0 +1,49 @@
+# An entry relay (docs/relays.md). 'onionglass relays add' writes a file like this one for each
+# relay, with its own key. Run it with:
+#
+#   onionglass relay run --config relay.toml
+#
+# The only secret in it is the key file. Keep that file readable by one user, and copy nothing
+# else from the gateway to the relay host.
+
+[relay]
+# The entry domains this relay serves, and the names under them. Any other name is a missing page.
+domains = ["gateway.example.org"]
+
+# Behind a proxy on this machine that ends TLS. The proxy writes the visitor's address, and the
+# relay uses it for its limits only.
+listen = "127.0.0.1"
+port = 8081
+trust_forwarded = true
+
+# To end TLS in the relay instead, listen on a public address and give it the certificate for the
+# domain and *.domain. A relay that listens on a public address must have both.
+#
+# listen = "0.0.0.0"
+# port = 443
+# tls_cert_file = "tls/fullchain.pem"
+# tls_key_file = "tls/privkey.pem"
+
+[origin]
+# Where the gateway is, and the fingerprint of the certificate it shows, as 64 lower-case
+# hexadecimal digits. The relay sends nothing to a gateway that shows another certificate.
+# This fingerprint is a placeholder. See docs/relays.md for how to get the real one.
+# To renew the gateway's certificate without a gap, give a list with the old and the new one:
+#   pin_sha256 = ["<the old fingerprint>", "<the new one>"]
+url = "https://203.0.113.5:8443"
+pin_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+connect_timeout = 10
+idle_timeout = 60
+
+[sign]
+# This relay's name, which is the id its public key has in the gateway's [relays] section, and
+# its private key.
+key_id = "r1"
+key_file = "relay-r1.key"
+
+[limits]
+max_concurrent = 200        # requests in flight in all
+max_per_client = 20         # requests in flight for one visitor
+max_request_body = 1000000  # keep this the same as the gateway's limit
+max_response_body = 200000000
+max_request_seconds = 300  # one whole request and its answer, however slowly it goes

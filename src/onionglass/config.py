@@ -47,9 +47,10 @@ SECTIONS = frozenset(
     {
         "server", "tor", "tickets", "limits", "profile", "profiles", "policy", "kill", "audit",
         "held", "names", "reports", "metrics", "quota", "hooks", "abuse", "known_sites",
-        "translate", "cover", "entries",
+        "translate", "cover", "relays", "entries",
     }
 )  # fmt: skip
+RELAYS_SETTINGS = frozenset({"require", "keys", "max_skew_seconds"})  # the guide lists these
 PROFILE_FIELDS = frozenset(f.name for f in fields(Profile))
 # The type each profile field takes from the config file. A field missing here would be accepted
 # by the file check and then ignored, so a test keeps this in step with ``Profile``.
@@ -220,6 +221,8 @@ def _key_ring(reader: _Reader, entries: Any, where: str) -> KeyRing:
         file = _get(entry, "public_key_file", str, label)
         if not key_id or not file:
             raise ConfigError(f"{label} needs an id and a public_key_file")
+        if ring.get(key_id) is not None:
+            raise ConfigError(f"{label}: the key id {key_id!r} is used twice")
         try:
             ring.add(key_id, load_public_key(reader.path(file), label))
         except ValueError as exc:
@@ -546,6 +549,22 @@ def _cover(reader: _Reader) -> dict[str, Any]:
         raise ConfigError(f"[cover]: {exc}") from exc
 
 
+def _relays(reader: _Reader) -> dict[str, Any]:
+    """The relays this gateway answers: their public keys, and whether anything else is turned
+    away. Without the section the gateway ignores relays altogether."""
+    if "relays" not in reader.root:
+        return {}
+    table = reader.table("relays", RELAYS_SETTINGS)
+    found: dict[str, Any] = {
+        "relay_keys": _key_ring(reader, table.get("keys"), "[relays].keys"),
+        "relay_required": _get_or(table, "require", bool, "[relays]", False),
+    }
+    skew = _get(table, "max_skew_seconds", int, "[relays]")
+    if skew is not None:
+        found["relay_skew"] = skew
+    return found
+
+
 def _abuse_contact(reader: _Reader) -> str | None:
     table = reader.table("abuse", {"contact"})
     if not table:
@@ -629,6 +648,7 @@ def parse_config(data: Mapping[str, Any], base: Path, entry: str | None = None) 
         **_services(reader, limits["hook_timeout"]),
         **_translator(reader),
         **_cover(reader),
+        **_relays(reader),
     }
     files = _safety_files(reader)
     try:

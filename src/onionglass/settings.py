@@ -18,6 +18,7 @@ from onionglass.lookalike import KnownSites
 from onionglass.namegate import NameGate
 from onionglass.policy import Policy
 from onionglass.quota import QuotaMeter
+from onionglass.relayauth import DEFAULT_SKEW_SECONDS
 from onionglass.reports import ReportQueue
 from onionglass.tickets import KeyRing
 from onionglass.translate import Translator
@@ -156,6 +157,9 @@ class Settings:
     max_entity_sends_per_session: int = 20
     translator: Translator | None = None
     cover: Cover | None = None  # what a visitor who has not signed in sees
+    relay_keys: KeyRing | None = None  # the relays this gateway answers, by key
+    relay_required: bool = False  # serve only requests a relay signed
+    relay_skew: int = DEFAULT_SKEW_SECONDS  # how far a relay's clock may differ, in seconds
     translate_timeout: float = 20.0
     max_concurrent_translations: int = 8
     metrics_token: str | None = None
@@ -208,6 +212,17 @@ class Settings:
         every = (self.profile, *self.profiles.values())
         if self.cover is not None and self.open_mode:
             raise ValueError("cover mode needs a sign-in, so it cannot be used in personal mode")
+        if self.relay_keys is not None and self.open_mode:
+            raise ValueError("relays need a sign-in, so they cannot be used in personal mode")
+        if self.relay_required and self.relay_keys is None:
+            raise ValueError("relays are required but no relay key is set")
+        if self.relay_required and self.cover is None:
+            raise ValueError(
+                "requiring relays needs cover mode, so that a visit that skipped them sees a "
+                "plain page"
+            )
+        if not 5 <= self.relay_skew <= 600:
+            raise ValueError("the allowed clock difference for relays is 5 to 600 seconds")
         if self.audit is None and (self.entity_sink is not None or self.translator is not None):
             raise ValueError(
                 "an entity sink or a translator needs an audit log, because every send "

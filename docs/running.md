@@ -257,6 +257,33 @@ onionglass domains retire --config team.toml --name alpha
 - **You still arrange** the DNS records, the wildcard certificate for each domain (the proxy blocks use one DNS token, so it must be able to edit every zone) and a service for each entry in the deployment bundle. `deploy/team/compose.yaml` has a commented example.
 - **Why not one gateway for many domains.** The domain is built into the security headers, the host parsing, the rewritten links and the cookies. Changing all of that would put the most sensitive code at risk to save starting a few more processes.
 
+### Entry relays
+
+A censor can also block the one address a gateway sits on. An entry relay is a small forwarder you run on as many cheap hosts as you like, with the domain pointed at them. The gateway then stays out of sight and answers only requests a relay signed. [relays.md](relays.md) has the whole guide, including what a relay can read, which is everything, and so why only you may run one.
+
+```
+[relays]
+require = false          # true once every visitor comes through a relay
+max_skew_seconds = 60    # how far a relay's clock may differ from the gateway's
+
+[[relays.keys]]
+id = "r1"
+public_key_file = "keys/relay-r1.public.pem"
+```
+
+```
+onionglass relays add --config team.toml --name r1 --out relay-r1 --origin-url https://203.0.113.5:8443 --pin-sha256 ...
+onionglass relays list --config team.toml
+onionglass relays revoke --config team.toml --name r1
+onionglass relay run --config relay.toml        # on the relay host
+onionglass relay check --config relay.toml      # asks the gateway whether it knows this relay
+```
+
+- **Required or not.** With `require = false` the gateway knows its relays and still answers anyone who reaches it. With `require = true` a request that is not signed by a relay it knows gets the cover page at `/` and a missing page elsewhere, cannot sign in, and cannot open anything. That needs [cover mode](#cover-mode) to be on, and the gateway will not start without it. The health check still answers this machine, and the metrics still answer a scraper with the token.
+- **Keys.** Each relay has its own. The gateway holds only the public ones, reads them when it starts, and so needs a restart to add or revoke one. A signature is good for one request, within `max_skew_seconds` of the gateway's clock (60 by default).
+- **Entries.** The relay keys are shared by every entry. Each entry's gateway has its own port, so each needs its own TLS port for its relays, and a relay for that domain points at it.
+- **Checks.** `check-config` says which relays a gateway knows and whether they are required, and warns while they are not.
+
 ### Checking that a domain is reachable
 
 ```

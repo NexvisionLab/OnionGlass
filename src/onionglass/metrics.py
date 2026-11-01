@@ -19,7 +19,8 @@ PREFIX = "onionglass_"
 BUCKETS = (0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
 REFUSAL_REASONS = (
     "kill", "held", "policy", "policy-unavailable", "quota", "quota-unavailable", "name-gate",
-    "profile", "unrated", "rate-limit", "audit-unavailable", "unknown-profile", "other",
+    "profile", "unrated", "rate-limit", "audit-unavailable", "unknown-profile", "not-relayed",
+    "other",
 )  # fmt: skip
 STATUS_CLASSES = ("1xx", "2xx", "3xx", "4xx", "5xx")
 CATEGORIES = ("illegal", "harmful", "scam", "other")

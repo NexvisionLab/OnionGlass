@@ -141,6 +141,8 @@ Read [censorship.md](censorship.md) first. It says what a gateway can and cannot
 - **A domain for each group** (`onionglass domains add`), each its own gateway service. `compose.yaml` has a commented example, and `onionglass domains caddy` prints the proxy block for every domain. Each domain needs its own DNS records and wildcard certificate, and the DNS token must cover every zone.
 - **`onionglass domains check`** to see where a domain fails, from the server and from a trusted machine inside the country.
 
+- **Entry relays** (`onionglass relays add`), so that the gateway's own address stays out of sight and blocking an address costs one cheap host. The relays run on other servers, and [relays.md](relays.md) says how, including the TLS endpoint and the firewall rule the gateway's server needs. The bundle does not include them.
+
 Tor bridges and Snowflake proxies do not go in this bundle and must not share the gateway's server. [bridges.md](bridges.md) says how to run them on another one.
 
 Points about the proxy:

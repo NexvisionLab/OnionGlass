@@ -53,7 +53,7 @@ In personal mode there is no proxy and no TLS: the gateway listens on `127.0.0.1
 | Reader view | A toolbar button that shows a page as plain readable text, with no pictures, forms or styles. |
 | Translation | A toolbar button that translates the page text through a service you run, such as a self-hosted LibreTranslate. Only the words are sent. |
 | Entity panel | Lists the wallets (Bitcoin, Ethereum, Monero), email addresses and onion addresses a page names, each checked against its own checksum. Optionally sends them on to a case system when the visitor presses a button. |
-| Censorship | Cover mode (a stranger sees a plain page), a separate domain and gateway for each group of users, and a check of where a domain is blocked. It makes blocking slower and narrower and cannot prevent it. See [docs/censorship.md](docs/censorship.md). |
+| Censorship | Cover mode (a stranger sees a plain page), a separate domain and gateway for each group of users, a check of where a domain is blocked, and entry relays that keep the gateway's own address out of sight. It makes blocking slower and narrower and cannot prevent it. See [docs/censorship.md](docs/censorship.md). |
 | Safety | Blocklist, allowlist, rated list (unrated sites are shown as text only), kill file, page-title name gate with a held list, look-alike warning for copycat addresses, visitor reports with a review queue. |
 | Accounts | Signed one-time sign-in links (Ed25519) that name a profile, a group and a subject. Per-session profiles with request limits and daily allowances. |
 | Operations | Audit log with a choice of how sites are named in it, Prometheus metrics, operator commands for stopping, holding and reading reports, a public abuse page, a config checker. |
@@ -322,6 +322,7 @@ The properties, the threats against them and the tests that prove each one are l
 | `entities` | Wallet, email and onion address extraction with checksums, and the entity batch. |
 | `torcheck` | The Tor check: whether Tor is there, is Tor, and can find onion sites. |
 | `cover`, `entries`, `reach` | Cover mode, the entry domains for each group of users, and the check of where a domain is blocked. |
+| `relay`, `relayauth`, `relayconfig`, `relaycli` | The entry relay, the signature a relay puts on each request and the gateway checks, a relay's config file, and the commands. |
 | `translate`, `httpexchange` | The translation client, and the HTTP exchange it shares with the hooks. |
 | `settings`, `config`, `cli`, `teamcli`, `admin` | Profiles and settings, the config loader, the commands. |
 | `pages`, `store`, `files` | The gateway's own pages, the session store, safe file appends. |
@@ -388,6 +389,7 @@ Onion sites can host illegal and harmful material. The project includes blocklis
 - [Operator responsibilities](docs/operator-responsibilities.md)
 - [Abuse procedure](docs/abuse-procedure.md)
 - [Censorship](docs/censorship.md): what a gateway can and cannot do where the internet is blocked, and how to run one there.
+- [Entry relays](docs/relays.md): many addresses in front of one hidden gateway, so that blocking an address costs less.
 - [Tor bridges](docs/bridges.md): running a Snowflake proxy or a WebTunnel bridge on a separate server, to help people reach Tor directly.
 
 ## Security

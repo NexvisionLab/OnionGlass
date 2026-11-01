@@ -50,13 +50,16 @@ async def call(
     path: str,
     *,
     host: str = APEX,
-    headers: dict[str, str] | None = None,
+    headers: dict[str, str] | list[tuple[str, str]] | None = None,
     body: bytes = b"",
     client: tuple[str, int] = ("127.0.0.1", 50000),
 ) -> tuple[int, bytes]:
-    """One request straight into the application, so that several can be in flight together."""
+    """One request straight into the application, so that several can be in flight together.
+
+    ``headers`` may be a list of pairs, to send the same header twice."""
     pairs = [(b"host", host.encode("ascii")), (b"content-length", str(len(body)).encode("ascii"))]
-    pairs += [(k.lower().encode("ascii"), v.encode("ascii")) for k, v in (headers or {}).items()]
+    given = headers.items() if isinstance(headers, dict) else (headers or [])
+    pairs += [(k.lower().encode("ascii"), v.encode("ascii")) for k, v in given]
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},

@@ -24,6 +24,7 @@ Status: draft for the pre-alpha. This document is the project's contract. Every 
 | Malicious visitor | Tries to reach non-onion destinations, internal addresses, other visitors' sessions, or to overload the service. |
 | Abusive visitor | Uses the gateway to reach illegal material. |
 | Compromised gateway host | Full control of one box. |
+| Hostile or compromised relay host | When entry relays are used: reads and changes everything that passes through it, can speak to the gateway as that relay until its key is revoked, and knows where the gateway is. |
 | Malicious contributor or dependency | Ships harmful code through a pull request or a package. |
 
 The operator of the gateway is trusted by visitors only in the sense that they chose to use it. The operator can read everything that passes through. This is stated plainly in the README and is not a vulnerability.
@@ -37,6 +38,7 @@ The operator of the gateway is trusted by visitors only in the sense that they c
 5. Gateway to hooks, which are optional external services.
 6. Gateway to evidence sinks.
 7. Gateway to the full-session browser container, when that module is used.
+8. When entry relays are used: the visitor's browser to a relay, over TLS, and the relay to the gateway, over a second TLS connection that the relay checks by fingerprint and the gateway checks by signature.
 
 ## 4. Security properties
 
@@ -55,6 +57,9 @@ These are the properties tests must prove.
 | P9 | Sign-in tickets cannot be forged, replayed after use, or used after expiry. |
 | P10 | Visitor addresses are not written to logs unless the operator opted in, and then only in the form they chose. |
 | P11 | The onion address a visitor opens does not appear in DNS lookups, TLS server names or URLs, because hostnames are opaque per-session labels. |
+| P12 | When relays are required, a request that was not signed by a relay the gateway knows, for that exact request, is answered as a stranger's: the cover page at `/`, a missing page elsewhere, and no sign-in. |
+| P13 | A relay passes nothing that names the visitor to the gateway, and writes no log of requests or addresses. |
+| P14 | A relay forwards only requests for the domains it was set up for, and only over a connection to a gateway whose certificate matches the fingerprint it was given. |
 
 ## 5. Threats and mitigations
 
@@ -96,6 +101,9 @@ These are the properties tests must prove.
 | A hostile page signs a visitor in as someone else by sending their browser to a sign-in link | A Continue page that does not use the ticket up, and a confirmation that works only when it comes from the gateway's own page | P9 |
 | A censor blocks the gateway's domain, address or server name | Each group has its own domain, run as its own gateway, so a block costs one group and shows which. Domains are added and retired by command, and `domains check` shows where a connection fails. This slows blocking and narrows it. It cannot prevent it, and a country that allows only an approved list of services defeats it | P7 |
 | A censor visits the domain to see what it is, or provokes an error | Cover mode: a stranger sees a plain page at `/` and the same missing-page answer, with the same headers, for every other address and method, for errors, and for host names that belong to no session. The health check answers only this machine | P6 |
+| A censor blocks the one address a gateway sits on, or finds it and visits it | Entry relays: the domain points at servers the operator runs, which forward to a gateway whose address is not public. With relays required, the gateway answers only requests a relay signed with its own Ed25519 key, over a connection the relay pins, and shows anyone else the cover page. A blocked relay is taken out of DNS, its key revoked and its host destroyed, with the gateway untouched. The relay holds only its own key, so a stolen one gives away no sign-in key, audit data or Tor | P12, P13, P14 |
+| A relay is run by someone who should not see the pages, or is broken into | Not prevented. A relay ends the visitor's TLS and so reads and can change every page, including the security headers that P1 depends on. Relays are for hosts the operator controls and never for volunteers, and the guide says so first | none, by design |
+| Someone who learns the gateway's address talks to it directly, or replays what a relay sent | The gateway needs a valid signature for each request, tied to its method, host, path and query, good for one request within the allowed clock difference and used once, and the firewall in the guide admits only the relays. A request without one is a stranger's | P12 |
 | A censor, or a stranger, learns which onion site a visitor opened from a domain's name | The onion address never appears in DNS, in the server name or in the URL, as before. Cover mode and per-group domains reduce what a visitor to the domain can learn. They do not hide that the domain exists or who connects to it | P2 |
 | The reader view is used to get around a rule, or lets something through that the normal view blocks | The reader view is a second, narrower rendering of the same fetched page: the same admission, audit, quota and name checks run first, the allowed tags and attributes are a strict subset of the normal list, and the setting is kept per session and changed only by a same-origin request from a signed-in visitor | P1, P6 |
 | Nobody knows where to report a site, or a complaint has nowhere to go | A public abuse page, reachable without signing in, that names the operator's contact and tells people to send the address and never the material. The contact must be an email address or an https link, and the check-config command warns when it is missing | P6 |
@@ -106,6 +114,7 @@ These are the properties tests must prove.
 ## 6. Known limits
 
 - **Operator visibility.** The operator, and anyone who compromises the host, sees all traffic. The mitigation is organisational, not technical. Personal mode keeps traffic on the visitor's own machine.
+- **A relay is as trusted as the gateway.** With entry relays the same applies to every relay host, and there are more of them. A relay cannot be made to see less, because the pages are plain HTTPS inside the visitor's TLS. The signature does not cover the request body, so the hop to the gateway must be encrypted, which the relay checks for.
 - **Traffic analysis.** A global observer who watches both the visitor and the gateway may correlate them. Tor does not defend against this and neither does this project.
 - **Tor protocol and client bugs** are outside this project. We track the Tor package in our images.
 - **The visitor's endpoint.** A compromised browser or device is out of scope.
@@ -137,6 +146,9 @@ Anonymity of the visitor against the operator, circumventing law enforcement or 
 | P9 tickets cannot be forged or replayed | Covered | `tests/test_tickets.py` |
 | P10 visitor addresses not logged | Covered: the gateway keeps no visitor addresses, and the audit log names the onion site only in the form the operator chose (`origin`, `full`, `hash` or `none`) | `tests/test_policy_ops.py`, `tests/test_gateway.py` |
 | P11 onion address absent from host names | Covered for label generation and mapping, and checked in a real browser | `tests/test_labels.py`, `tests/test_hosts.py`, `tests/test_gateway.py` |
+| P12 unsigned requests are a stranger's | Covered for the signature (every field, replay, age, unknown and revoked keys, malformed values and generated text), for the gateway's answer to everything unsigned, and end to end with the real gateway behind a real server | `tests/test_relay_auth.py`, `tests/test_relay_gateway.py`, `tests/test_relay_end_to_end.py` |
+| P13 nothing names the visitor | Covered: only a short list of ordinary browser headers is passed on, so every header that names the visitor is dropped whether or not it was thought of, the visitor's address is not in what the gateway receives, the gateway sees only the relay as its peer, and nothing about a visitor is logged | `tests/test_relay.py`, `tests/test_relay_fuzz.py`, `tests/test_relay_end_to_end.py` |
+| P14 only its own domains, only the pinned gateway | Covered: other hosts get a missing page and nothing is sent on, a wrong certificate gets no request, an answer that is not a web server's is a bad gateway, and a visitor who is slow, quiet or gone cannot hold a place | `tests/test_relay.py`, `tests/test_relay_config.py` |
 
 ## 9. Checked by hand in a real browser
 

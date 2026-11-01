@@ -23,9 +23,12 @@ would put the most security-sensitive code at risk to save starting a few more p
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import os
 import re
+import stat
+import sys
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -186,12 +189,30 @@ def next_port(data: Mapping[str, Any]) -> int:
     return int(max(port for port in used if _whole(port))) + 1
 
 
+def _keep_access(path: Path, temporary: str) -> None:
+    """Give the replacement the mode and owner of the file it replaces. A new file from mkstemp is
+    private to whoever made it, and a config that the gateway's own user can no longer read would
+    stop the gateway at its next start, which is a bad time to find out."""
+    try:
+        before = path.stat()
+    except FileNotFoundError:
+        return  # a new file stays private to its owner
+    os.chmod(temporary, stat.S_IMODE(before.st_mode))
+    if sys.platform != "win32":
+        if os.geteuid() == 0:  # only root may give a file to another user
+            os.chown(temporary, before.st_uid, before.st_gid)
+        else:  # anyone may give it to a group they belong to, which is how the gateway reads it
+            with contextlib.suppress(OSError):
+                os.chown(temporary, -1, before.st_gid)
+
+
 def write_text_atomic(path: Path, text: str) -> None:
     """Replace a file in one step, so a failure part way never leaves half a config."""
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
+        _keep_access(path, temporary)
         os.replace(temporary, path)
     except OSError:
         if os.path.exists(temporary):

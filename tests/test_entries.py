@@ -319,3 +319,32 @@ def test_admin_commands_can_work_on_one_entry(
     assert command(*args) == 0
     assert (layout.root / "state" / "bravo" / "kill").exists()
     assert not (layout.root / "state" / "alpha" / "kill").exists()
+
+
+def test_replacing_a_config_file_keeps_the_mode_it_had(tmp_path: Path) -> None:
+    import os  # noqa: PLC0415
+    import stat  # noqa: PLC0415
+
+    from onionglass.entries import write_text_atomic  # noqa: PLC0415
+
+    if os.name == "nt":
+        pytest.skip("file modes mean nothing on Windows")
+    path = tmp_path / "team.toml"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o640)  # readable by the group the gateway runs as
+    write_text_atomic(path, "new")
+    assert path.read_text(encoding="utf-8") == "new"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
+
+def test_a_new_file_is_made_private_to_its_owner(tmp_path: Path) -> None:
+    import os  # noqa: PLC0415
+    import stat  # noqa: PLC0415
+
+    from onionglass.entries import write_text_atomic  # noqa: PLC0415
+
+    if os.name == "nt":
+        pytest.skip("file modes mean nothing on Windows")
+    path = tmp_path / "new.toml"
+    write_text_atomic(path, "text")
+    assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0

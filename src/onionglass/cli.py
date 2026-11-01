@@ -27,7 +27,7 @@ from onionglass.upstream import TorConfig, TorFetcher
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 TEAM_COMMANDS = frozenset(
-    {"serve", "check-config", "keys", "ticket", "admin", "domains", "check-tor"}
+    {"serve", "check-config", "keys", "ticket", "admin", "domains", "check-tor", "relay", "relays"}
 )
 # Inside a container the gateway must listen on all the container's addresses so the published
 # port reaches it. The container image sets this variable, and the compose file publishes the

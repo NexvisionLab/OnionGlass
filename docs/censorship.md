@@ -59,6 +59,12 @@ Adding a domain, issuing a link for it and retiring one that has been blocked ar
 
 `onionglass domains check` reports, for each domain, where a connection fails: the name lookup, the connection, the TLS handshake or the page. Run from a trusted machine inside the country, it tells you which domains are blocked and how. Run from outside, it gives you a baseline to compare with. Running it from inside the country is a risk to whoever does it, because it connects to the domain.
 
+### Entry relays: keep the gateway's address out of sight
+
+A censor can block the domain, or the one server address that a gateway sits on. Changing domains answers the first, and it does nothing for the second. With entry relays, the domain points at several cheap servers that you run. Each one forwards to a gateway whose address nobody else knows. When a relay's address is blocked, you take it out of DNS, cut off its key and destroy the host, and the gateway and its users are not touched. The gateway answers only requests that a relay has signed, and shows everyone else the plain cover page. See [relays.md](relays.md).
+
+Limits: a relay reads every page that passes through it, so only you may run one, on a host you would trust with the gateway itself. A stolen relay is as bad as a stolen gateway for as long as it is in use. Relays do nothing if the domain is blocked, they need cover mode, and they are more servers to look after.
+
 ## What to do as an operator
 
 1. **Decide who the gateway is for.** For analysts and journalists with an operator they trust, a gateway is reasonable. For the general public in a censoring country, it is not the right tool, and the better use of your effort is running Tor bridges (below) and pointing people to the Tor Project's routes.
@@ -67,8 +73,9 @@ Adding a domain, issuing a link for it and retiring one that has been blocked ar
 4. **Hand out domains carefully.** A domain given freely is found by the censor. Give each group its own, give it through a channel the censor cannot easily read, and expect to rotate. The Tor Project found that bridges handed out through a channel that was easy to collect were blocked within months, while handing them out through a Telegram bot was harder for the censor to collect ([Tor Project, 2025](https://blog.torproject.org/staying-ahead-of-censors-2025/)). The sign-in service decides this, and it is yours. onionglass only checks the ticket it is given.
 5. **Run Tor bridges as well.** The Tor Project asks anyone with a website to [run a WebTunnel bridge](https://community.torproject.org/relay/setup/webtunnel/), and anyone to run a Snowflake proxy. That helps the people who most need it, and it does not put your gateway between them and what they read. Use a separate server. The deployment guide says the gateway should share its machine with nothing else. [bridges.md](bridges.md) says how.
 6. **Watch for blocking from the inside.** Use `onionglass domains check` from a trusted vantage point, or OONI Probe, and rotate when a domain stops working.
-7. **Think about a CDN before using one.** Putting a large content network in front of the gateway means a censor must block a shared address that many other sites use, which is a real cost to it. But the network then sees every page a visitor reads. That breaks the promise that only the operator sees them. It is your decision, and it should be a conscious one. onionglass does not do it for you and does not recommend it.
-8. **Take legal advice.** Serving users in sanctioned countries has rules that differ by country, and neither this page nor the project can advise on them.
+7. **Keep the gateway's address out of sight, if addresses are what gets blocked.** Entry relays put cheap servers in front of the gateway. They cost more to run, and they read every page, so they are for hosts you control and never for volunteers. [relays.md](relays.md) says how.
+8. **Think about a CDN before using one.** Putting a large content network in front of the gateway means a censor must block a shared address that many other sites use, which is a real cost to it. But the network then sees every page a visitor reads. That breaks the promise that only the operator sees them. It is your decision, and it should be a conscious one. onionglass does not do it for you and does not recommend it.
+9. **Take legal advice.** Serving users in sanctioned countries has rules that differ by country, and neither this page nor the project can advise on them.
 
 ## What this cannot do
 

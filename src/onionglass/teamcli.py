@@ -23,7 +23,7 @@ from typing import Any
 import uvicorn
 from cryptography.hazmat.primitives import serialization
 
-from onionglass import reach
+from onionglass import reach, relaycli
 from onionglass.admin import (
     AdminError,
     AdminPaths,
@@ -57,7 +57,9 @@ from onionglass.tickets import TicketIssuer, generate_key
 from onionglass.torcheck import TorStatus, check_tor
 from onionglass.upstream import TorFetcher
 
-COMMANDS = frozenset({"serve", "check-config", "keys", "ticket", "admin", "domains", "check-tor"})
+COMMANDS = frozenset(
+    {"serve", "check-config", "keys", "ticket", "admin", "domains", "check-tor", "relay", "relays"}
+)
 ENTRY_HELP = "run, check or work on this entry (see [entries] in the config file)"
 
 
@@ -90,6 +92,7 @@ def _parser() -> argparse.ArgumentParser:
     ticket.add_argument("--seconds", type=int, default=60, help="how long the link works")
     _admin_parser(commands)
     _domains_parser(commands)
+    relaycli.add_parsers(commands)
     tor = commands.add_parser(
         "check-tor", help="check that Tor is running and can find onion sites"
     )
@@ -267,6 +270,16 @@ def describe(config: TeamConfig) -> list[str]:
             "warning: cover mode keeps the public abuse page hidden, so publish "
             "the abuse contact somewhere else"
         )
+    if s.relay_keys is not None:
+        ids = ", ".join(sorted(s.relay_keys.ids()))
+        if s.relay_required:
+            lines.append(f"relays: {ids}, only requests a relay signed are served")
+        else:
+            lines.append(f"relays: {ids}, not required yet, so a direct visit is still served")
+            lines.append(
+                "warning: relays are not required, so this gateway's own address still answers "
+                "anyone who finds it"
+            )
     if s.audit is None:
         lines.append("warning: no audit log, so nothing records who opened what")
     if s.kill is None:
@@ -488,17 +501,17 @@ def _domains(args: argparse.Namespace) -> int:
 
 def _without_a_gateway(args: argparse.Namespace) -> int | None:
     """The commands that work on keys, links and files and never start a gateway."""
-    if args.command == "keys":
-        return _generate(args.id, args.out)
-    if args.command == "ticket":
-        return _ticket(args)
-    if args.command == "admin":
-        return _admin(args)
-    if args.command == "domains":
-        return _domains(args)
-    if args.command == "check-tor":
-        return _check_tor(args)
-    return None
+    handlers: dict[str, Callable[[argparse.Namespace], int]] = {
+        "keys": lambda a: _generate(a.id, a.out),
+        "ticket": _ticket,
+        "admin": _admin,
+        "domains": _domains,
+        "check-tor": _check_tor,
+        "relay": relaycli.run,
+        "relays": relaycli.run,
+    }
+    handler = handlers.get(args.command)
+    return handler(args) if handler is not None else None
 
 
 def run(argv: Sequence[str]) -> int:

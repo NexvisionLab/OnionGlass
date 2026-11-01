@@ -31,7 +31,8 @@ LIST = f"{TOR_PROJECT} The Tor Project\n{DUCKDUCKGO} DuckDuckGo\n"
 def copy_of(address: str, *, shared_bytes: int = 5) -> str:
     """A valid address that begins with the same bytes as ``address`` and is a different site."""
     original = base64.b32decode(address.upper())[:32]
-    key = original[:shared_bytes] + os.urandom(32 - shared_bytes)
+    changed = bytes([original[shared_bytes] ^ 0xFF])  # never the same, whatever chance gives
+    key = original[:shared_bytes] + changed + os.urandom(31 - shared_bytes)
     version = bytes([3])
     checksum = hashlib.sha3_256(b".onion checksum" + key + version).digest()[:2]
     return base64.b32encode(key + checksum + version).decode("ascii").lower()
@@ -39,6 +40,19 @@ def copy_of(address: str, *, shared_bytes: int = 5) -> str:
 
 def served(**extra: Any) -> Env:
     return Env(lambda _r: reply("<p>x</p>"), known_sites=parse_known_sites(LIST), **extra)
+
+
+@pytest.mark.parametrize("shared_bytes", [0, 3, 5])
+def test_the_helper_never_repeats_the_listed_address_whatever_chance_gives(
+    shared_bytes: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The worst luck there is: the "random" bytes are the listed address's own next bytes.
+    original = base64.b32decode(TOR_PROJECT.upper())[:32]
+    monkeypatch.setattr(os, "urandom", lambda n: original[shared_bytes : shared_bytes + n])
+    copy = copy_of(TOR_PROJECT, shared_bytes=shared_bytes)
+    assert copy != TOR_PROJECT
+    if shared_bytes * 8 < MIN_SHARED_PREFIX * 5:  # fewer bits than the characters checked hold
+        assert copy[:MIN_SHARED_PREFIX] != TOR_PROJECT[:MIN_SHARED_PREFIX]
 
 
 def test_the_helper_makes_a_real_copy_that_shares_the_start() -> None:

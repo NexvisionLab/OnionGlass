@@ -69,12 +69,12 @@ def test_an_upload_that_takes_longer_than_the_idle_time_is_not_cut_off_while_it_
     assert [seen.body for seen in origin.seen] == [b"xxx"]
 
 
-def test_a_gateway_that_says_nothing_after_the_whole_upload_is_still_a_bad_gateway_after_the_idle_time() -> (
+def test_a_gateway_that_says_nothing_after_the_whole_upload_is_still_a_bad_gateway_after_the_first_byte_time() -> (
     None
 ):
     async def scenario() -> Answer:
         async with FakeOrigin(lambda _s: Reply(stall=5)) as origin:
-            relay = relay_for(origin.port, idle_timeout=0.5)
+            relay = relay_for(origin.port, idle_timeout=0.5, first_byte_timeout=0.5)
             return await ask(
                 relay, "POST", "/open", headers=[("content-length", "2")], body=[b"hi"]
             )
@@ -164,7 +164,8 @@ def test_an_answer_that_outlasts_the_total_time_is_not_blamed_on_the_gateway(
 
 def test_a_gateway_that_goes_quiet_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level("DEBUG")
-    answer, _ = run(through(lambda _s: Reply(stall=5), relay_options={"idle_timeout": 0.3}))
+    options = {"idle_timeout": 0.3, "first_byte_timeout": 0.3}
+    answer, _ = run(through(lambda _s: Reply(stall=5), relay_options=options))
     assert answer.status == 502
     assert len(lines(caplog)) == 1
 

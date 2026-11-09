@@ -2,7 +2,7 @@
 
 A self-hostable gateway that lets you open `.onion` sites in an ordinary browser, safely, and capture what you see as evidence.
 
-> **Status: pre-alpha.** Personal mode works: you can open onion sites in your own browser, on your own machine, through your own Tor, and it has been run against the real Tor network on public sites. A team mode, driven by one config file, adds sign-in links, profiles, allowances, an audit log, a kill file, a name gate with a held list, visitor reports, metrics and signed HTTP hooks. A deployment bundle with a Tor pool and a wildcard-certificate proxy is written but has not been run yet. Evidence capture, passkeys and client certificates, and the full remote browser are not built yet, and the project has not had an independent security test. Do not run it as a service for other people before you have read [Running it for other people](#running-it-for-other-people).
+> **Status: pre-alpha.** Personal mode works: you can open onion sites in your own browser, on your own machine, through your own Tor, and it has been run against the real Tor network on public sites. A team mode, driven by one config file, adds sign-in links, profiles, allowances, an audit log, a kill file, a name gate with a held list, visitor reports, metrics and signed HTTP hooks. A deployment bundle with a Tor pool and a wildcard-certificate proxy is written. Its Tor pool and gateway have run on one test server, and its certificate proxy has not been run yet. Evidence capture, passkeys and client certificates, and the full remote browser are not built yet, and the project has not had an independent security test. Do not run it as a service for other people before you have read [Running it for other people](#running-it-for-other-people).
 
 ## Contents
 

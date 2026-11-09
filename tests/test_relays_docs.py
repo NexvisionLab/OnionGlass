@@ -48,7 +48,9 @@ def test_the_first_things_the_guide_says_are_what_a_relay_can_read_and_who_may_r
 
 def test_the_guide_says_what_has_not_been_tried() -> None:
     lowered = guide().lower()
-    assert "never been run on a real" in lowered or "has not been run on a real" in lowered
+    status = lowered.split("## what a relay is for", 1)[0]
+    assert "has not been run with a real domain" in status
+    assert "separate hosts" in status and "real censor" in status
     assert lowered.count("not tried here") >= 2  # the proxy block and the service unit
 
 

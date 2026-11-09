@@ -307,6 +307,8 @@ def _add(args: argparse.Namespace, data: dict[str, Any], text: str) -> list[str]
     new_text = _with_relay(text, data, name, public_name)
 
     key = generate_key()
+    # A folder this command makes is removed again if it fails and nothing else has gone into it.
+    new_folders = [folder for folder in (args.out, base / "keys") if not folder.exists()]
     args.out.mkdir(parents=True, exist_ok=True)
     (base / "keys").mkdir(exist_ok=True)
     made: list[Path] = []
@@ -338,6 +340,9 @@ def _add(args: argparse.Namespace, data: dict[str, Any], text: str) -> list[str]
         for path in made:
             with contextlib.suppress(OSError):
                 path.unlink()
+        for folder in new_folders:
+            with contextlib.suppress(OSError):
+                folder.rmdir()  # refuses, harmlessly, if anything is in it
         raise
     required = "relays are required" if _required(data) else "relays are not required yet"
     return [

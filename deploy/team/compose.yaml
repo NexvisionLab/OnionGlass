@@ -12,8 +12,9 @@
 #     internet, and the proxy can for certificates.
 #   * Every container is read-only, drops all capabilities and cannot gain new ones.
 #
-# Docker was not available where this file was written, so it has been checked for structure by
-# the tests and has not been run. Bring it up on a test machine before you rely on it.
+# The two Tor processes and the gateway have been brought up from this file on a test server, and
+# a real onion site was opened through them. The proxy service, with its wildcard certificate from
+# the DNS plugin, has not been run. Bring all of it up on a test machine before you rely on it.
 
 x-hardened: &hardened
   restart: unless-stopped

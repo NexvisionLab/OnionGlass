@@ -57,6 +57,10 @@ MAX_HEADER_BYTES = 16_384
 MAX_HEAD_BYTES = 65_536
 DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_IDLE_TIMEOUT = 60.0
+# How long the gateway may take to start its answer once the whole request has been sent. The
+# gateway itself waits up to 60 seconds to reach an onion site and gives up after 120 in all, and
+# then answers with its own error page, so the relay has to wait longer than that.
+DEFAULT_FIRST_BYTE_TIMEOUT = 150.0
 DEFAULT_MAX_REQUEST_SECONDS = 300.0
 _READ_CHUNK = 65_536
 _HOST_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789.-")
@@ -192,6 +196,7 @@ class RelaySettings:
     max_request_seconds: float = DEFAULT_MAX_REQUEST_SECONDS
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT
     idle_timeout: float = DEFAULT_IDLE_TIMEOUT
+    first_byte_timeout: float = DEFAULT_FIRST_BYTE_TIMEOUT
     trust_forwarded: bool = False  # take the visitor's address for limits from a proxy in front
 
     def __post_init__(self) -> None:
@@ -204,7 +209,11 @@ class RelaySettings:
             raise ValueError("a relay limit is out of range")
         if not 1 <= self.max_response_body <= 10_000_000_000:
             raise ValueError("max_response_body is out of range")
-        if not (0 < self.connect_timeout <= 120 and 0 < self.idle_timeout <= 600):
+        if not (
+            0 < self.connect_timeout <= 120
+            and 0 < self.idle_timeout <= 600
+            and 0 < self.first_byte_timeout <= 600
+        ):
             raise ValueError("a relay timeout is out of range")
         if not 0 < self.max_request_seconds <= 3600:
             raise ValueError("max_request_seconds is out of range")
@@ -480,7 +489,7 @@ class Relay:
                     raise error
                 # Sent, or the gateway shut the connection while it was being sent. Either way
                 # its answer is what is left to wait for, and the visitor may leave meanwhile.
-                if await self._unless_visitor_leaves(self._within_idle(first), receive):
+                if await self._unless_visitor_leaves(self._within_first_byte(first), receive):
                     raise _Gone
             hop.connection.receive_data(first.result())
             return await self._read_head(hop)
@@ -490,10 +499,10 @@ class Relay:
                     task.cancel()
             await asyncio.gather(sender, first, return_exceptions=True)
 
-    async def _within_idle(self, waiting: asyncio.Future[bytes]) -> None:
-        """Wait for something the gateway has not said yet, for as long as the idle time."""
+    async def _within_first_byte(self, waiting: asyncio.Future[bytes]) -> None:
+        """Wait for the gateway to start its answer, for as long as the first-byte time."""
         try:
-            await asyncio.wait_for(waiting, self.settings.idle_timeout)
+            await asyncio.wait_for(waiting, self.settings.first_byte_timeout)
         except TimeoutError:
             raise _Failed from None
 

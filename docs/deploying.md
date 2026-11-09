@@ -4,7 +4,7 @@ This is the step-by-step for the bundle in `deploy/team`. It sets up a gateway o
 
 Read [operator-responsibilities.md](operator-responsibilities.md) and [abuse-procedure.md](abuse-procedure.md) before you open this to anyone. Running a gateway for other people is a legal and operational responsibility, and the software cannot take it from you.
 
-**Status.** The bundle has been checked for structure by the tests and has not been started, because Docker was not available where it was written. Bring it up on a test machine and a test domain first, and expect to find things.
+**Status.** The bundle has been checked for structure by the tests. The two Tor processes and the gateway have been built and started from it on one test server, and a real onion site was opened through them. The proxy, with its wildcard certificate from the DNS plugin, has not been run, and nor has the whole bundle with a real domain. Bring it up on a test machine and a test domain first, and expect to find things. Two things that were found: the compose file wants `DOMAIN`, `ACME_EMAIL` and an existing `secrets/proxy.env` even when you start only the Tor and gateway services, and the metrics token file must be mode 600 or the gateway refuses to start.
 
 ## What you need
 

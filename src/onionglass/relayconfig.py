@@ -26,6 +26,7 @@ from onionglass.config import (
 )
 from onionglass.relay import (
     DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_FIRST_BYTE_TIMEOUT,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_MAX_REQUEST_SECONDS,
     Origin,
@@ -39,7 +40,9 @@ SECTIONS = frozenset({"relay", "origin", "sign", "limits"})
 RELAY_SETTINGS = frozenset(
     {"domains", "listen", "port", "tls_cert_file", "tls_key_file", "trust_forwarded"}
 )
-ORIGIN_SETTINGS = frozenset({"url", "pin_sha256", "allow_plain", "connect_timeout", "idle_timeout"})
+ORIGIN_SETTINGS = frozenset(
+    {"url", "pin_sha256", "allow_plain", "connect_timeout", "idle_timeout", "first_byte_timeout"}
+)
 SIGN_SETTINGS = frozenset({"key_id", "key_file"})
 COUNT_LIMITS = frozenset(
     {"max_concurrent", "max_per_client", "max_request_body", "max_response_body"}
@@ -198,6 +201,7 @@ def parse_relay_config(data: dict[str, Any], base: Path) -> RelayConfig:
     for key, default in (
         ("connect_timeout", DEFAULT_CONNECT_TIMEOUT),
         ("idle_timeout", DEFAULT_IDLE_TIMEOUT),
+        ("first_byte_timeout", DEFAULT_FIRST_BYTE_TIMEOUT),
     ):
         options[key] = _positive(origin_table, key, "[origin]", default)
     options["trust_forwarded"] = _get_or(relay, "trust_forwarded", bool, "[relay]", False)

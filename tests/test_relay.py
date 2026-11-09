@@ -513,9 +513,20 @@ def test_an_answer_that_is_not_a_web_servers_is_a_bad_gateway(reply: Reply) -> N
     assert answer.status == 502
 
 
-def test_a_gateway_that_never_answers_is_a_bad_gateway_after_the_idle_time() -> None:
-    answer, _ = run(through(lambda _s: Reply(stall=5), relay_options={"idle_timeout": 0.3}))
+def test_a_gateway_that_never_answers_is_a_bad_gateway_after_the_first_byte_time() -> None:
+    options = {"idle_timeout": 0.3, "first_byte_timeout": 0.3}
+    answer, _ = run(through(lambda _s: Reply(stall=5), relay_options=options))
     assert answer.status == 502
+
+
+def test_a_gateway_that_is_slow_to_start_answering_is_waited_for_longer_than_the_idle_time() -> (
+    None
+):
+    """A gateway reaching a slow onion site over Tor can take a minute or two before its first
+    byte, and says so with its own error page. The relay must not cut in before that."""
+    options = {"idle_timeout": 0.3, "first_byte_timeout": 5}
+    answer, _ = run(through(lambda _s: Reply(stall=0.8, body=b"late"), relay_options=options))
+    assert answer.status == 200 and answer.body == b"late"
 
 
 def cut_off(answer: Answer) -> None:
@@ -763,6 +774,8 @@ def test_the_last_address_the_proxy_wrote_is_the_one_used_and_a_bad_one_is_ignor
         {"max_response_body": 0},
         {"connect_timeout": 0},
         {"idle_timeout": 601},
+        {"first_byte_timeout": 0},
+        {"first_byte_timeout": 601},
     ],
 )
 def test_relay_settings_that_could_not_work_are_refused(options: dict[str, Any]) -> None:

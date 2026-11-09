@@ -1,6 +1,6 @@
 # Entry relays: many addresses in front of one hidden gateway
 
-Status: pre-alpha. The whole path, a visitor, the relay and the real gateway behind a real web server, is tested on one machine over a plain connection. The encrypted hop and the fingerprint check are tested against a small stand-in for the gateway, and the relay's own start-up was tried by hand and under test with its web server replaced. It has not been run on a real relay host, behind a real firewall or against a real censor. The proxy, firewall and service snippets on this page have not been tried either, and each says so where it appears.
+Status: pre-alpha. The whole path, a visitor, the relay and the real gateway behind a real web server, is tested on one machine over a plain connection. The encrypted hop and the fingerprint check are tested against a small stand-in for the gateway, and the relay's own start-up was tried by hand and under test with its web server replaced. It has also been run once on a single test server, with the shipped Docker files for the gateway and Tor, a relay in a container, a pinned encrypted hop, a made-up domain with a throwaway certificate, and a real onion site opened through all of it. Adding and revoking relays, requiring them and `relay check` were tried there. It has not been run with a real domain and a certificate from an authority, with the relay and the gateway on separate hosts, behind a real firewall or against a real censor. The proxy, firewall and service snippets on this page have not been tried either, and each says so where it appears.
 
 This page is for someone who runs a gateway for people in a country that blocks it. Read [censorship.md](censorship.md) first, because it says what a gateway cannot do whatever you add to it.
 
@@ -83,6 +83,8 @@ If the gateway has [several entry domains](running.md#entry-domains), each one i
 onionglass relays add --config team.toml --name r1 --out relay-r1 \
   --origin-url https://203.0.113.5:8443 --pin-sha256 <the fingerprint>
 ```
+
+With the Docker setup in `deploy/team`, the gateway's settings are mounted read-only into its container, so run this command in a one-off container from the same image instead. Mount the config folder, made writable for this one command and no longer, and mount the state folder at `/var/lib/onionglass`, because the command checks the whole file, the audit folder included, and refuses if it is not there. Run it as the gateway's user, uid 10001. This was tried on one test machine.
 
 Use the gateway server's own address and the fingerprint from step 1. The command:
 
@@ -203,7 +205,8 @@ In a relay's own file, as in [`docs/examples/relay.toml`](examples/relay.toml):
 | `[origin].url` | The gateway's address, `https://host:port`, with no path. The host must be a name or an address. |
 | `[origin].pin_sha256` | The gateway certificate's SHA-256 fingerprint, 64 lower-case hexadecimal digits, or a list of them of which any one will do. Required for `https`. |
 | `[origin].allow_plain` | Allow an unencrypted `http` hop to an address that is not on this machine. Only for a network you trust completely. Default `false`. |
-| `[origin].connect_timeout`, `idle_timeout` | Seconds. Defaults 10 and 60. The idle time applies to a visitor who stops sending a body and to a visitor who does not take the answer, who are cut off so that they cannot hold a place for ever, and to a gateway that goes quiet once the whole request has been sent. |
+| `[origin].connect_timeout`, `idle_timeout` | Seconds. Defaults 10 and 60. The idle time applies to a visitor who stops sending a body and to a visitor who does not take the answer, who are cut off so that they cannot hold a place for ever, and to a gateway that goes quiet in the middle of its answer. |
+| `[origin].first_byte_timeout` | Seconds. Default 150. How long the gateway may take to start its answer once the whole request has been sent. A gateway that is reaching a slow onion site waits up to 60 seconds for Tor and gives up after 120 in all, and then answers with its own error page. Keep this longer than that, or the relay cuts in first with a bare "Bad Gateway". |
 | `[sign].key_id`, `key_file` | This relay's name and its private key. |
 | `[limits].max_concurrent`, `max_per_client` | Requests in flight in all, and for one visitor. Defaults 200 and 20. Over the limit, the relay answers 503 or 429 and asks the visitor to wait. One visitor is one IPv4 address, or one IPv6 network of 2 to the power 64 addresses. Past twice `max_concurrent` open connections, silent ones included, the relay's web server answers with a plain 503 of its own, which no relay setting changes. |
 | `[limits].max_request_body`, `max_response_body` | Bytes. Defaults 1,000,000 and 200,000,000. Keep the first the same as the gateway's. A body over the first gets the missing page. |

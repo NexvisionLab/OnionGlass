@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -53,6 +54,18 @@ def test_adding_a_relay_makes_its_key_its_file_and_the_gateways_entry(
     settings = load_config(layout.config).settings
     assert settings.relay_keys is not None and settings.relay_keys.ids() == ["r1"]
     assert settings.relay_required is False  # nothing is cut off until the operator says so
+
+
+def test_a_failed_add_leaves_no_files_and_no_new_folder_behind(tmp_path: Path) -> None:
+    """The gateway's own check runs last. If it fails, the command undoes everything it made, the
+    folder it made for the relay's files included."""
+    layout, out = Layout(tmp_path), tmp_path / "out"
+    shutil.rmtree(tmp_path / "state")  # the folder the audit log needs, so the file cannot load
+    before = layout.text()
+    assert add(layout, out, *with_origin()) != 0
+    assert layout.text() == before
+    assert not out.exists()
+    assert not (tmp_path / "keys" / "relay-r1.public.pem").exists()
 
 
 def test_the_key_the_gateway_trusts_is_the_one_the_relay_signs_with(tmp_path: Path) -> None:
